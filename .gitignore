@@ -1,0 +1,14 @@
+# dependencies / build
+node_modules/
+dist/
+coverage/
+.vite/
+
+# large runtime assets: fetched by `npm run setup` (see README)
+public/models/
+public/wasm/
+
+# tooling
+_workspace/
+.DS_Store
+*.log
