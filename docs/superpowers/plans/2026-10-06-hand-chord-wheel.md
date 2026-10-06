@@ -4,17 +4,18 @@
 
 **Goal:** Chrome에서 로컬로 도는 웹캠 악기. 오른손 위치로 12칸 코드 휠에서 코드를 고르고, 손 펼침 정도로 음량을 조절하며, Tone.js 신디사이저로 화음을 낸다.
 
-**Architecture:** Vite + TypeScript, 프레임워크 없음. 순수 계산(각도→칸, 펼침%, 유지 규칙, 코드→MIDI)은 `src/mapping.ts`·`src/chords.ts`에 두고 Vitest로 테스트한다. 브라우저 전용 부분(카메라, MediaPipe, Tone.js, Canvas)은 얇은 래퍼 모듈로 분리하고 `src/main.ts`가 상태 전이(IDLE→READY→PLAYING)를 맡는다. 소리 출력은 `ChordOutput` 인터페이스 뒤에 숨겨 2차 MIDI 출력을 끼울 수 있게 한다.
+**Architecture:** Vite + TypeScript, 프레임워크 없음. 순수 계산(각도→칸, 펼침%, 히스테리시스, 유지 규칙, 코드→MIDI, 손 고르기)은 `src/mapping.ts`·`src/chords.ts`·`src/hands.ts`에 두고 Vitest로 테스트한다. 브라우저 전용 부분(카메라, MediaPipe, Tone.js, Canvas)은 얇은 래퍼 모듈로 분리하고 `src/main.ts`가 상태 전이(IDLE→READY→PLAYING, ERROR)를 맡는다. 소리 출력은 `ChordOutput` 인터페이스 뒤에 숨겨 2차 MIDI 출력을 끼울 수 있게 한다.
 
 **Tech Stack:** @mediapipe/tasks-vision 1.0.1, tone 15.1.22, tonal 6.4.3(고정), vite 8.3.3, vitest 5.0.3, typescript 5.9.3. Node 25.8.1, macOS, Chrome.
 
-**Spec:** `docs/superpowers/specs/2026-10-06-hand-chord-wheel-design.md`
+**Spec:** `docs/superpowers/specs/2026-10-06-hand-chord-wheel-design.md` (8장 "실패 분석 반영" 포함)
+**실패 분석:** `docs/superpowers/specs/2026-10-06-failure-analysis.md` — 이 계획은 그 결과(CRITICAL 3, GAP 12)를 모두 반영한 2판이다.
 
 **규칙(전 작업 공통):**
 - 커밋 메시지 끝에 `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` 한 줄.
 - `public/models/`, `public/wasm/`, `node_modules/`는 절대 커밋하지 않는다(.gitignore 처리됨).
 - 테스트는 `npx vitest run tests/<파일>` 로 개별 실행, 전체 검증은 `npm run verify`.
-- 각 Task의 "Expected" 와 다르면 멈추고 원인을 찾는다(즉흥 패치 금지).
+- 각 Task의 "Expected" 와 다르면 멈추고 원인을 찾는다(즉흥 패치 금지). 라이브러리 시그니처가 의심되면 `node_modules/<pkg>`의 `.d.ts`를 읽는다.
 
 ---
 
@@ -23,19 +24,20 @@
 | 파일 | 책임 |
 |---|---|
 | `package.json`, `tsconfig.json`, `vite.config.ts` | 의존성 고정, 타입 검사, 개발 서버 + Vitest 설정 |
-| `index.html` | 비디오·캔버스·버튼·팔레트 입력. CSS 포함 |
-| `scripts/setup-assets.sh` | 모델 내려받기(바이트 수 검증) + wasm 복사 |
-| `scripts/verify-all.sh` | 타입 검사, 테스트, 자산 확인, 시크릿 검사, 버전 고정 확인 |
-| `src/config.ts` | 모든 상수 |
-| `src/mapping.ts` | 순수 함수: 각도, 칸, 데드존, 펼침, 지수 이동 평균, 유지 규칙 |
-| `src/chords.ts` | 순수 함수: 팔레트 파싱, 코드→MIDI |
+| `index.html` | 16:9 프레임 안에 비디오·캔버스·버튼·팔레트 입력·좌우 바꾸기 체크박스. CSS 포함 |
+| `scripts/setup-assets.sh` | 모델 내려받기(바이트 수 검증) + wasm 복사. macOS/Linux 공용(`wc -c`) |
+| `scripts/verify-all.sh` | 타입 검사, 테스트, 자산 확인, 시크릿 검사, 버전 고정 확인, 대용량 미추적 확인 |
+| `src/config.ts` | 모든 상수(임계값·타임아웃 포함) |
+| `src/mapping.ts` | 순수 함수: 각도, 칸, 데드존, 펼침, 지수 이동 평균, 유지 규칙, 히스테리시스 |
+| `src/chords.ts` | 순수 함수: 팔레트 파싱(표기 정규화), 코드→MIDI |
+| `src/hands.ts` | 순수 함수: MediaPipe 결과에서 오른손 고르기(점수·화면 안·연속성) |
 | `src/output.ts` | `ChordOutput` 인터페이스 |
-| `src/audio.ts` | Tone.js 구현체 `ToneOutput` |
-| `src/camera.ts` | getUserMedia |
-| `src/tracker.ts` | MediaPipe 래퍼 + 오른손 고르기(순수 함수 `pickRightHand`) |
+| `src/audio.ts` | Tone.js 구현체 `ToneOutput` (+ 컨텍스트 상태 감시·재개) |
+| `src/camera.ts` | 지원 여부 확인, getUserMedia, 트랙 종료 콜백, 닫기 |
+| `src/tracker.ts` | MediaPipe 래퍼(GPU→CPU 폴백) → `hands.ts` 호출 |
 | `src/overlay.ts` | Canvas 그리기 + `wheelGeometry` |
-| `src/main.ts` | 상태 전이, 프레임 루프, DOM 이벤트 |
-| `tests/*.test.ts` | mapping, chords, tracker(pickRightHand), overlay(wheelGeometry) |
+| `src/main.ts` | 상태 전이, 시작 절차(자산 확인→소리→모델→카메라, 타임아웃), 프레임 루프(예외 격리·워치독), DOM 이벤트 |
+| `tests/*.test.ts` | mapping, chords, hands, overlay(wheelGeometry) |
 | `.claude/` | verifier·debugging 스킬, 영향 범위 훅 |
 | `README.md`, `LICENSE` | 실행법, 라이선스(MIT, 저작권자 표기는 사용자 확인) |
 
@@ -44,7 +46,7 @@
 ### Task 1: 프로젝트 뼈대와 자산 준비
 
 **Files:**
-- Create: `package.json`, `tsconfig.json`, `vite.config.ts`, `index.html`(임시), `scripts/setup-assets.sh`, `scripts/verify-all.sh`, `LICENSE`, `README.md`(임시)
+- Create: `package.json`, `tsconfig.json`, `vite.config.ts`, `index.html`(임시), `src/main.ts`(임시), `scripts/setup-assets.sh`, `scripts/verify-all.sh`, `LICENSE`, `README.md`(임시)
 
 - [ ] **Step 1: package.json 작성**
 
@@ -108,7 +110,9 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 4: 임시 index.html 작성 (Task 9에서 교체)**
+- [ ] **Step 4: 임시 index.html / main.ts 작성 (Task 9에서 교체)**
+
+`index.html`:
 
 ```html
 <!doctype html>
@@ -121,7 +125,7 @@ export default defineConfig({
 </html>
 ```
 
-그리고 `src/main.ts`를 임시로 만든다(타입 검사 통과용):
+`src/main.ts`:
 
 ```ts
 console.log("hand chord wheel: scaffold");
@@ -143,7 +147,8 @@ WASM_DST="$ROOT/public/wasm"
 
 mkdir -p "$ROOT/public/models" "$WASM_DST"
 
-size_of() { stat -f%z "$1" 2>/dev/null || echo 0; }
+# macOS/Linux 공용 (stat -f/-c 차이를 피한다)
+size_of() { if [ -f "$1" ]; then wc -c < "$1" | tr -d ' '; else echo 0; fi; }
 
 if [ "$(size_of "$MODEL")" != "$MODEL_BYTES" ]; then
   echo "모델 내려받는 중: $MODEL_URL"
@@ -174,6 +179,8 @@ cd "$ROOT" || exit 1
 LOG="$(mktemp)"
 fail=0
 
+size_of() { if [ -f "$1" ]; then wc -c < "$1" | tr -d ' '; else echo 0; fi; }
+
 run() {
   local name="$1"; shift
   if "$@" >"$LOG" 2>&1; then echo "PASS: $name"; else echo "FAIL: $name"; tail -30 "$LOG"; fail=1; fi
@@ -182,7 +189,7 @@ run() {
 run "타입 검사 (tsc --noEmit)" npx tsc --noEmit
 run "단위 테스트 (vitest run)" npx vitest run
 
-if [ -f public/models/hand_landmarker.task ] && [ "$(stat -f%z public/models/hand_landmarker.task)" = "7819105" ]; then
+if [ "$(size_of public/models/hand_landmarker.task)" = "7819105" ]; then
   echo "PASS: 모델 자산"
 else
   echo "WARN: 모델 자산 없음/크기 불일치 — npm run setup"
@@ -280,20 +287,25 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - [ ] **Step 1: config.ts 작성**
 
 ```ts
-// 모든 조정 가능한 상수. 숫자 근거는 설계 문서 3장.
+// 모든 조정 가능한 상수. 숫자 근거는 설계 문서 3장·8장.
 export const CONFIG = {
   wheel: {
     outerRadiusRatio: 0.375, // 영상 높이 대비 바깥 반지름
-    restRadiusRatio: 0.07, // 중앙 쉼 원판
+    restRadiusRatio: 0.07, // 중앙 쉼 원판(진입 기준)
+    restExitFactor: 1.3, // 쉼 원판 이탈은 반지름 × 1.3 밖으로 나가야 함 (히스테리시스)
     labelRadiusRatio: 0.8, // 바깥 반지름 대비 글자 위치
   },
   sector: { deadZoneDeg: 3 },
   openness: {
     closedRatio: 0.8, // ASSUMPTION — Task 11에서 실측 교정
     openRatio: 1.7, // ASSUMPTION — Task 11에서 실측 교정
-    muteBelowPercent: 15,
+    muteBelowPercent: 15, // 이 미만이면 무음으로 진입
+    unmuteAbovePercent: 20, // 이 이상이어야 다시 소리 (히스테리시스)
   },
-  smoothing: { alpha: 0.5 },
+  smoothing: {
+    alpha: 0.5,
+    resetAfterGapMs: 100, // 손이 이만큼 안 보였다 다시 나타나면 필터 초기화
+  },
   hold: { lostGraceMs: 500 },
   tracker: {
     wasmPath: "/wasm",
@@ -302,16 +314,30 @@ export const CONFIG = {
     minHandDetectionConfidence: 0.5,
     minHandPresenceConfidence: 0.5,
     minTrackingConfidence: 0.5,
-    swapHandedness: false, // Task 11에서 실측 후 결정
+    minHandednessScore: 0.7, // 이 미만 점수의 손은 무시(가장자리 잘림 등)
+    swapHandedness: false, // Task 11에서 실측 후 기본값 결정. 런타임 체크박스로도 바꿀 수 있음
+    swapStorageKey: "hcw.swap.v1",
   },
   audio: {
     attack: 0.02,
     decay: 0.1,
     sustain: 0.8,
     release: 0.4,
-    maxPolyphony: 8,
+    maxPolyphony: 32, // Tone 기본값. 놓은 음도 여음이 끝날 때까지 슬롯을 차지하므로 8은 부족
     lookAheadSec: 0.02,
     rampSec: 0.05,
+  },
+  startup: {
+    assetCheckMs: 5000,
+    audioMs: 3000,
+    modelMs: 20000,
+    cameraMs: 60000, // 권한 팝업에서 사용자가 고민하는 시간 포함
+  },
+  loop: { maxConsecutiveErrors: 30 }, // 약 1초 연속 실패면 ERROR
+  notice: {
+    defaultMs: 4000,
+    leftOnlyAfterMs: 1000, // 다른 손만 1초 이상 보이면 안내
+    leftOnlyRepeatMs: 5000,
   },
   palette: {
     default: ["B", "Em6", "A9", "D#7", "G#m", "A", "B7", "Emaj7", "E6", "G", "F#7sus4", "C#m7"],
@@ -345,7 +371,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Create: `src/mapping.ts`
 - Test: `tests/mapping.test.ts`
 
-- [ ] **Step 1: 각도·칸 테스트 작성 (실패 확인용)**
+- [ ] **Step 1: 각도·칸 테스트 작성**
 
 `tests/mapping.test.ts`:
 
@@ -362,6 +388,7 @@ import {
   isInRest,
   Ema,
   HoldTracker,
+  Hysteresis,
   type Landmarks,
 } from "../src/mapping";
 
@@ -395,13 +422,14 @@ describe("nextSector: 경계 ±3도 데드존", () => {
   it("1번 칸에서 48도는 2번으로 전환", () => expect(nextSector(1, 48, 12, 3)).toBe(2));
   it("0번 칸에서 343도(반시계 쪽 경계)는 유지", () => expect(nextSector(0, 343, 12, 3)).toBe(0));
   it("0번 칸에서 341도는 11번으로 전환", () => expect(nextSector(0, 341, 12, 3)).toBe(11));
+  it("팔레트가 줄어 이전 칸 번호가 범위를 벗어나면 새로 계산", () => expect(nextSector(11, 10, 6, 3)).toBe(0));
 });
 ```
 
 - [ ] **Step 2: 실패 확인**
 
 Run: `npx vitest run tests/mapping.test.ts`
-Expected: FAIL — `Failed to resolve import "../src/mapping"` 또는 유사한 모듈 없음 오류.
+Expected: FAIL — `Failed to resolve import "../src/mapping"` 류 모듈 없음 오류.
 
 - [ ] **Step 3: 각도·칸 구현**
 
@@ -457,11 +485,11 @@ export function sectorFromAngle(deg: number, n: number): number {
 
 /**
  * 데드존 히스테리시스. prev 칸의 범위를 양쪽으로 deadZoneDeg만큼 넓혀,
- * 그 안에 있으면 prev를 유지하고 벗어나야 새 칸으로 바꾼다.
+ * 그 안에 있으면 prev를 유지하고 벗어나야 새 칸으로 바꾼다. prev가 범위 밖(팔레트 축소)이면 새로 계산.
  */
 export function nextSector(prev: number | null, deg: number, n: number, deadZoneDeg: number): number {
   const candidate = sectorFromAngle(deg, n);
-  if (prev === null || candidate === prev) return candidate;
+  if (prev === null || prev >= n || candidate === prev) return candidate;
   const span = 360 / n;
   const delta = ((deg - prev * span + 540) % 360) - 180; // prev 중심 기준 -180..180
   return Math.abs(delta) < span / 2 + deadZoneDeg ? prev : candidate;
@@ -471,44 +499,44 @@ export function nextSector(prev: number | null, deg: number, n: number, deadZone
 - [ ] **Step 4: 통과 확인**
 
 Run: `npx vitest run tests/mapping.test.ts`
-Expected: 각도·칸 테스트 모두 PASS. (아직 import한 다른 함수가 없어 `opennessRatio is not a function` 류 오류가 나면 Step 5~8의 테스트를 추가하기 전까지는 해당 import를 잠시 지우지 말고 Step 5로 바로 진행한다 — Vitest는 미사용 import를 오류로 보지 않는다. 다만 ESM import 자체가 실패하면(`does not provide an export named`) Step 5~8의 구현을 먼저 채운다.)
+Expected: 각도·칸 테스트 PASS. (아직 구현하지 않은 export 때문에 import 단계에서 `does not provide an export named` 오류가 나면 Step 5~11의 구현을 먼저 채운 뒤 다시 실행한다.)
 
 - [ ] **Step 5: 펼침·쉼 원판 테스트 추가**
 
 `tests/mapping.test.ts` 끝에 추가:
 
 ```ts
-/** 합성 손: 손목(0.5,0.9), 손바닥 뿌리 4개 y=0.7, 손끝 5개는 뿌리에서 tipDist만큼 위 */
+/** 합성 손(픽셀 좌표): 손목(640,648), 손바닥 뿌리 4개 y=504, 손끝 5개는 뿌리에서 tipDist만큼 위 */
 function syntheticHand(tipDist: number, scale = 1): Landmarks {
-  const lm: { x: number; y: number }[] = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.8 }));
-  lm[0] = { x: 0.5, y: 0.9 };
-  const mcpX = [0.4, 0.47, 0.53, 0.6];
-  [5, 9, 13, 17].forEach((id, i) => (lm[id] = { x: mcpX[i]!, y: 0.7 }));
-  [4, 8, 12, 16, 20].forEach((id, i) => (lm[id] = { x: 0.38 + i * 0.06, y: 0.7 - tipDist }));
+  const lm: { x: number; y: number }[] = Array.from({ length: 21 }, () => ({ x: 640, y: 576 }));
+  lm[0] = { x: 640, y: 648 };
+  const mcpX = [512, 602, 678, 768];
+  [5, 9, 13, 17].forEach((id, i) => (lm[id] = { x: mcpX[i]!, y: 504 }));
+  [4, 8, 12, 16, 20].forEach((id, i) => (lm[id] = { x: 486 + i * 77, y: 504 - tipDist }));
   return lm.map((p) => ({ x: p.x * scale, y: p.y * scale }));
 }
 
 describe("palmCenter / distance", () => {
-  it("합성 손의 손바닥 중심은 (0.5, 0.74)", () => {
-    const c = palmCenter(syntheticHand(0.3));
-    expect(c.x).toBeCloseTo(0.5, 6);
-    expect(c.y).toBeCloseTo(0.74, 6);
+  it("합성 손의 손바닥 중심은 (640, 532.8)", () => {
+    const c = palmCenter(syntheticHand(200));
+    expect(c.x).toBeCloseTo(640, 6);
+    expect(c.y).toBeCloseTo(532.8, 6);
   });
   it("distance는 유클리드 거리", () => expect(distance({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5));
 });
 
 describe("opennessRatio: 손 크기로 정규화한 손끝 거리", () => {
-  it("편 손(1.9 부근)이 주먹(0.45 부근)보다 크다", () => {
-    const open = opennessRatio(syntheticHand(0.35));
-    const fist = opennessRatio(syntheticHand(0.0));
+  it("편 손이 주먹보다 크다 (1.5 초과 vs 0.6 미만)", () => {
+    const open = opennessRatio(syntheticHand(250));
+    const fist = opennessRatio(syntheticHand(0));
     expect(open).toBeGreaterThan(1.5);
     expect(fist).toBeLessThan(0.6);
   });
   it("카메라 거리가 2배(좌표 ×0.5)여도 같은 값", () => {
-    expect(opennessRatio(syntheticHand(0.35, 0.5))).toBeCloseTo(opennessRatio(syntheticHand(0.35)), 10);
+    expect(opennessRatio(syntheticHand(250, 0.5))).toBeCloseTo(opennessRatio(syntheticHand(250)), 10);
   });
   it("손목과 중지 뿌리가 겹치면(크기 0) 0", () => {
-    const lm = syntheticHand(0.3).map((p) => ({ ...p }));
+    const lm = syntheticHand(200).map((p) => ({ ...p }));
     lm[9] = { ...lm[0]! };
     expect(opennessRatio(lm)).toBe(0);
   });
@@ -537,7 +565,11 @@ Expected: FAIL — `opennessRatio`, `opennessPercent`, `isInRest` export 없음.
 `src/mapping.ts` 끝에 추가:
 
 ```ts
-/** 손끝 5개와 손바닥 중심 거리의 평균을 손목–중지뿌리 거리로 나눈 값. 카메라 거리와 무관. */
+/**
+ * 손끝 5개와 손바닥 중심 거리의 평균을 손목–중지뿌리 거리로 나눈 값. 카메라 거리와 무관.
+ * 반드시 등방(픽셀) 좌표로 호출한다. MediaPipe 정규화 좌표(x는 가로폭 기준, y는 세로폭 기준)로 부르면
+ * 손 회전에 따라 값이 달라진다.
+ */
 export function opennessRatio(lm: Landmarks): number {
   const palm = palmCenter(lm);
   const scale = distance(at(lm, 0), at(lm, 9));
@@ -562,9 +594,9 @@ export function isInRest(center: Point, p: Point, restRadius: number): boolean {
 - [ ] **Step 8: 통과 확인**
 
 Run: `npx vitest run tests/mapping.test.ts`
-Expected: PASS (Ema/HoldTracker 테스트는 아직 없음).
+Expected: PASS (Ema/HoldTracker/Hysteresis 테스트는 아직 없음).
 
-- [ ] **Step 9: 지수 이동 평균·유지 규칙 테스트 추가**
+- [ ] **Step 9: 지수 이동 평균·유지 규칙·히스테리시스 테스트 추가**
 
 `tests/mapping.test.ts` 끝에 추가:
 
@@ -591,7 +623,17 @@ describe("HoldTracker: 손 소실 500ms 유예", () => {
     expect(h.update(false, 400)).toBe(true);
     expect(h.update(false, 600)).toBe(false);
   });
-  it("한 번도 본 적 없으면 false", () => expect(new HoldTracker(500).update(false, 100)).toBe(false));
+  it("한 번도 본 적 없으면 false, lastSeenMs는 null", () => {
+    const h = new HoldTracker(500);
+    expect(h.update(false, 100)).toBe(false);
+    expect(h.lastSeenMs).toBeNull();
+  });
+  it("lastSeenMs는 마지막으로 본 시각", () => {
+    const h = new HoldTracker(500);
+    h.update(true, 120);
+    h.update(false, 300);
+    expect(h.lastSeenMs).toBe(120);
+  });
   it("reset 후에는 유예 없음", () => {
     const h = new HoldTracker(500);
     h.update(true, 0);
@@ -599,12 +641,36 @@ describe("HoldTracker: 손 소실 500ms 유예", () => {
     expect(h.update(false, 100)).toBe(false);
   });
 });
+
+describe("Hysteresis: 켜짐 enter 이상, 꺼짐 exit 이하", () => {
+  it("소리: 20% 이상에서 켜지고 15% 미만에서 꺼진다", () => {
+    const s = new Hysteresis(20, 15);
+    expect(s.update(14)).toBe(false);
+    expect(s.update(17)).toBe(false); // 아직 enter(20) 미만
+    expect(s.update(21)).toBe(true);
+    expect(s.update(17)).toBe(true); // exit(15) 이상이라 유지
+    expect(s.update(14.9)).toBe(false);
+  });
+  it("쉼 원판 밖 판정: 65.5px 이상에서 '밖', 50.4px 미만에서 '안'", () => {
+    const outside = new Hysteresis(65.5, 50.4);
+    expect(outside.update(60)).toBe(false); // 처음엔 안
+    expect(outside.update(70)).toBe(true);
+    expect(outside.update(55)).toBe(true); // 애매 구간은 유지
+    expect(outside.update(50)).toBe(false);
+  });
+  it("reset(초기값)", () => {
+    const s = new Hysteresis(20, 15);
+    s.update(30);
+    s.reset();
+    expect(s.active).toBe(false);
+  });
+});
 ```
 
 - [ ] **Step 10: 실패 확인**
 
 Run: `npx vitest run tests/mapping.test.ts`
-Expected: FAIL — `Ema`, `HoldTracker` export 없음.
+Expected: FAIL — `Ema`, `HoldTracker`, `Hysteresis` export 없음.
 
 - [ ] **Step 11: 구현**
 
@@ -631,6 +697,9 @@ export class Ema {
 export class HoldTracker {
   private lastSeen: number | null = null;
   constructor(private readonly graceMs: number) {}
+  get lastSeenMs(): number | null {
+    return this.lastSeen;
+  }
   update(present: boolean, nowMs: number): boolean {
     if (present) {
       this.lastSeen = nowMs;
@@ -642,18 +711,41 @@ export class HoldTracker {
     this.lastSeen = null;
   }
 }
+
+/** 두 임계값 히스테리시스. value ≥ enter 이면 켜지고, value < exit 이면 꺼진다 (enter > exit). */
+export class Hysteresis {
+  private on = false;
+  constructor(
+    private readonly enter: number,
+    private readonly exit: number,
+  ) {}
+  get active(): boolean {
+    return this.on;
+  }
+  update(value: number): boolean {
+    if (this.on) {
+      if (value < this.exit) this.on = false;
+    } else if (value >= this.enter) {
+      this.on = true;
+    }
+    return this.on;
+  }
+  reset(initial = false): void {
+    this.on = initial;
+  }
+}
 ```
 
 - [ ] **Step 12: 전체 통과 확인**
 
 Run: `npx vitest run tests/mapping.test.ts`
-Expected: `Tests  27 passed` 부근(개수는 위 테스트 수와 일치), 실패 0.
+Expected: 모두 PASS, 실패 0.
 
 - [ ] **Step 13: Commit**
 
 ```bash
 git add src/mapping.ts tests/mapping.test.ts
-git commit -m "feat: 매핑 순수 함수(각도→칸, 데드존, 펼침%, EMA, 유지 규칙) + 테스트
+git commit -m "feat: 매핑 순수 함수(각도→칸, 데드존, 펼침%, EMA, 유지 규칙, 히스테리시스) + 테스트
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -695,6 +787,9 @@ describe("chordToMidi", () => {
   it("읽을 수 없는 기호는 빈 배열", () => expect(chordToMidi("Hxx")).toEqual([]));
   it("근음 없는 기호(maj7)는 빈 배열", () => expect(chordToMidi("maj7")).toEqual([]));
   it("D#7의 겹올림표(F##3)도 MIDI 55로 변환된다", () => expect(chordToMidi("D#7")).toContain(55));
+  it("유효한 코드는 항상 1음 이상", () => {
+    for (const [s] of EXPECTED) expect(chordToMidi(s).length).toBeGreaterThan(0);
+  });
 });
 
 describe("isValidChord", () => {
@@ -711,15 +806,20 @@ describe("isValidChord", () => {
 
 describe("parsePalette", () => {
   const DEFAULT = "B Em6 A9 D#7 G#m A B7 Emaj7 E6 G F#7sus4 C#m7";
-  it("공백 구분 12개 통과", () => {
+  it("공백 구분 12개 통과, 표기 그대로 유지", () => {
     const r = parsePalette(DEFAULT, 6, 16);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.chords).toHaveLength(12);
+    if (r.ok) expect(r.chords).toEqual(DEFAULT.split(" "));
   });
   it("쉼표·연속 공백·앞뒤 공백 허용", () => {
     const r = parsePalette("  B, Em6,  A9 D#7 ,G#m A ", 6, 16);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.chords).toEqual(["B", "Em6", "A9", "D#7", "G#m", "A"]);
+  });
+  it("소문자 근음은 표준 표기로 정규화 (em6 → Em6, bb → Bb)", () => {
+    const r = parsePalette("em6 a9 bb Bbmaj7 f#7sus4 G", 6, 16);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.chords).toEqual(["Em6", "A9", "Bb", "Bbmaj7", "F#7sus4", "G"]);
   });
   it("6개 미만 거부", () => {
     const r = parsePalette("B Em6 A9", 6, 16);
@@ -771,7 +871,7 @@ export function chordToMidi(symbol: string): number[] {
   return root === null ? midis : [root, ...midis];
 }
 
-/** 공백/쉼표로 구분된 팔레트 문자열 검사 */
+/** 공백/쉼표로 구분된 팔레트 문자열 검사. 통과한 기호는 tonal의 표준 표기(Chord.get().symbol)로 정규화한다. */
 export function parsePalette(input: string, min: number, max: number): PaletteParse {
   const tokens = input
     .split(/[\s,]+/)
@@ -782,20 +882,21 @@ export function parsePalette(input: string, min: number, max: number): PalettePa
   }
   const invalid = tokens.filter((t) => !isValidChord(t));
   if (invalid.length > 0) return { ok: false, invalid, reason: "읽을 수 없는 코드 기호" };
-  return { ok: true, chords: tokens };
+  const chords = tokens.map((t) => Chord.get(t).symbol || t);
+  return { ok: true, chords };
 }
 ```
 
 - [ ] **Step 4: 통과 확인**
 
 Run: `npx vitest run tests/chords.test.ts`
-Expected: 전부 PASS. 12개 MIDI 배열 중 하나라도 다르면 tonal 버전을 확인한다(`npm ls tonal` → 6.4.3이어야 함).
+Expected: 전부 PASS. 12개 MIDI 배열 중 하나라도 다르면 `npm ls tonal`로 6.4.3인지 확인한다.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/chords.ts tests/chords.test.ts
-git commit -m "feat: 코드 이름→MIDI 변환과 팔레트 파싱 + 테스트
+git commit -m "feat: 코드 이름→MIDI 변환과 팔레트 파싱(표기 정규화) + 테스트
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -812,14 +913,20 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```ts
 /** 소리 출력 공통 인터페이스. 1차 ToneOutput, 2차 midiOut(Web MIDI → GarageBand/Logic). */
 export interface ChordOutput {
-  /** 사용자 클릭 핸들러 안에서 호출해야 한다(브라우저 오디오 정책). */
+  /** 사용자 클릭 핸들러 안에서 동기적으로 호출을 시작해야 한다(브라우저 오디오 정책). */
   start(): Promise<void>;
-  /** 들고 있던 음을 놓고 새 화음을 바로 친다. */
+  /** 들고 있던 음을 놓고 새 화음을 바로 친다. 빈 배열이면 놓기만 한다. */
   play(midi: readonly number[]): void;
   /** 0~1 음량. */
   setLevel(level: number): void;
   /** 들고 있던 음을 놓는다. */
   stop(): void;
+  /** 출력 장치가 실제로 소리를 낼 수 있는 상태인가 */
+  isRunning(): boolean;
+  /** 일시중지된 출력을 다시 켠다(사용자 제스처 안에서 호출) */
+  resume(): Promise<void>;
+  /** 실행 가능 상태가 바뀔 때 알림 */
+  onStateChange(cb: (running: boolean) => void): void;
 }
 ```
 
@@ -869,19 +976,31 @@ export class ToneOutput implements ChordOutput {
     if (this.synth && this.heldHz.length > 0) this.synth.triggerRelease(this.heldHz);
     this.heldHz = [];
   }
+
+  isRunning(): boolean {
+    return Tone.getContext().state === "running";
+  }
+
+  async resume(): Promise<void> {
+    await Tone.getContext().resume();
+  }
+
+  onStateChange(cb: (running: boolean) => void): void {
+    Tone.getContext().on("statechange", () => cb(Tone.getContext().state === "running"));
+  }
 }
 ```
 
 - [ ] **Step 3: 타입 검사**
 
 Run: `npx tsc --noEmit`
-Expected: 출력 없음. `oscillator`/`envelope` 옵션 타입 오류가 나면 `new Tone.PolySynth(Tone.Synth, {...} as Partial<Tone.SynthOptions>)` 대신 **먼저** `node_modules/tone/build/esm/instrument/PolySynth.d.ts` 82~83행의 생성자 시그니처를 읽고 맞춘다(기억으로 고치지 말 것).
+Expected: 출력 없음. 옵션 타입 오류가 나면 **먼저** `node_modules/tone/build/esm/instrument/PolySynth.d.ts` 82~83행(생성자 오버로드)과 `core/context/BaseContext.d.ts` 11행(`Emitter<"statechange" | "tick">`)을 읽고 맞춘다(기억으로 고치지 말 것).
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add src/output.ts src/audio.ts
-git commit -m "feat: ChordOutput 인터페이스와 Tone.js 구현(ToneOutput)
+git commit -m "feat: ChordOutput 인터페이스와 Tone.js 구현(ToneOutput, 컨텍스트 상태 감시)
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -896,8 +1015,22 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - [ ] **Step 1: 작성**
 
 ```ts
-/** 전면 카메라를 열어 video에 연결하고 재생까지 기다린다. 거울 표시는 CSS(scaleX(-1))가 맡는다. */
-export async function openCamera(video: HTMLVideoElement): Promise<void> {
+/** 보안 컨텍스트·API 지원 여부. 실패하면 한국어 메시지를 가진 Error를 던진다(접두어 UNSUPPORTED). */
+export function assertCameraSupported(): void {
+  if (!window.isSecureContext) {
+    throw new Error("UNSUPPORTED: 이 주소에서는 카메라를 쓸 수 없습니다.\nChrome에서 http://127.0.0.1:5173 또는 http://localhost:5173 로 여세요");
+  }
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+    throw new Error("UNSUPPORTED: 이 브라우저는 카메라 API를 지원하지 않습니다. Chrome을 사용하세요");
+  }
+}
+
+/**
+ * 전면 카메라를 열어 video에 연결하고 재생까지 기다린다. 거울 표시는 CSS(scaleX(-1))가 맡는다.
+ * 이미 열린 스트림이 있으면 먼저 닫는다(재시도 누수 방지). 트랙이 끝나면(뽑힘·다른 앱 점유) onEnded를 1회 부른다.
+ */
+export async function openCamera(video: HTMLVideoElement, onEnded: () => void): Promise<void> {
+  stopCamera(video);
   const stream = await navigator.mediaDevices.getUserMedia({
     video: {
       width: { ideal: 1280 },
@@ -907,6 +1040,8 @@ export async function openCamera(video: HTMLVideoElement): Promise<void> {
     },
     audio: false,
   });
+  const track = stream.getVideoTracks()[0];
+  track?.addEventListener("ended", onEnded, { once: true });
   video.srcObject = stream;
   await new Promise<void>((resolve) => {
     if (video.readyState >= 1) resolve();
@@ -928,87 +1063,174 @@ Run: `npx tsc --noEmit` → 출력 없음.
 
 ```bash
 git add src/camera.ts
-git commit -m "feat: 카메라 열기/닫기
+git commit -m "feat: 카메라 지원 확인, 열기(트랙 종료 콜백), 닫기
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: MediaPipe 래퍼와 오른손 고르기 (순수 부분 TDD)
+### Task 7: 오른손 고르기(순수, TDD)와 MediaPipe 래퍼
 
 **Files:**
-- Create: `src/tracker.ts`
-- Test: `tests/tracker.test.ts`
+- Create: `src/hands.ts`, `src/tracker.ts`
+- Test: `tests/hands.test.ts`
 
-- [ ] **Step 1: pickRightHand 테스트 작성**
+- [ ] **Step 1: selectRightHand 테스트 작성**
 
-`tests/tracker.test.ts`:
+`tests/hands.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { pickRightHand } from "../src/tracker";
+import { selectRightHand } from "../src/hands";
 
-const lm = (x: number) => Array.from({ length: 21 }, () => ({ x, y: 0.5, z: 0 }));
+/** 21개 랜드마크를 모두 (x, 0.5)에 둔 가짜 손. visibility는 MediaPipe 타입과 맞추기 위해 둔다. */
+const lm = (x: number) => Array.from({ length: 21 }, () => ({ x, y: 0.5, z: 0, visibility: 1 }));
 const cat = (name: "Left" | "Right", score: number) => [{ categoryName: name, score, index: 0, displayName: "" }];
+const OPTS = { swap: false, minScore: 0.7, prevPalm: null };
 
-describe("pickRightHand", () => {
-  it("두 손 중 Right 라벨 손을 고른다", () => {
-    const r = pickRightHand({ landmarks: [lm(0.2), lm(0.8)], handedness: [cat("Left", 0.94), cat("Right", 0.96)] }, false);
-    expect(r?.score).toBe(0.96);
-    expect(r?.landmarks[0]?.x).toBe(0.8);
+describe("selectRightHand", () => {
+  it("두 손 중 Right 라벨 손을 고르고, 나머지는 otherPalms에", () => {
+    const r = selectRightHand({ landmarks: [lm(0.2), lm(0.8)], handedness: [cat("Left", 0.94), cat("Right", 0.96)] }, OPTS);
+    expect(r.chosen?.score).toBe(0.96);
+    expect(r.chosen?.palm.x).toBeCloseTo(0.8, 6);
+    expect(r.otherPalms).toHaveLength(1);
+    expect(r.labels).toEqual(["Left:0.94", "Right:0.96"]);
   });
   it("swap=true면 Left 라벨 손을 고른다", () => {
-    const r = pickRightHand({ landmarks: [lm(0.2), lm(0.8)], handedness: [cat("Left", 0.94), cat("Right", 0.96)] }, true);
-    expect(r?.landmarks[0]?.x).toBe(0.2);
+    const r = selectRightHand({ landmarks: [lm(0.2), lm(0.8)], handedness: [cat("Left", 0.94), cat("Right", 0.96)] }, { ...OPTS, swap: true });
+    expect(r.chosen?.palm.x).toBeCloseTo(0.2, 6);
   });
-  it("Right가 없으면 null", () => {
-    expect(pickRightHand({ landmarks: [lm(0.2)], handedness: [cat("Left", 0.9)] }, false)).toBeNull();
+  it("Right가 없으면 chosen null, 라벨은 남는다", () => {
+    const r = selectRightHand({ landmarks: [lm(0.2)], handedness: [cat("Left", 0.9)] }, OPTS);
+    expect(r.chosen).toBeNull();
+    expect(r.labels).toEqual(["Left:0.90"]);
   });
-  it("손이 없으면 null", () => expect(pickRightHand({ landmarks: [], handedness: [] }, false)).toBeNull());
+  it("손이 없으면 전부 비어 있다", () => {
+    expect(selectRightHand({ landmarks: [], handedness: [] }, OPTS)).toEqual({ chosen: null, otherPalms: [], labels: [] });
+  });
+  it("점수 0.7 미만은 무시", () => {
+    const r = selectRightHand({ landmarks: [lm(0.5)], handedness: [cat("Right", 0.55)] }, OPTS);
+    expect(r.chosen).toBeNull();
+  });
+  it("손바닥 중심이 화면 밖(x>1)이면 무시", () => {
+    const r = selectRightHand({ landmarks: [lm(1.2)], handedness: [cat("Right", 0.95)] }, OPTS);
+    expect(r.chosen).toBeNull();
+  });
+  it("오른손이 둘이면 직전 위치에 가까운 손", () => {
+    const r = selectRightHand(
+      { landmarks: [lm(0.2), lm(0.8)], handedness: [cat("Right", 0.9), cat("Right", 0.99)] },
+      { ...OPTS, prevPalm: { x: 0.25, y: 0.5 } },
+    );
+    expect(r.chosen?.palm.x).toBeCloseTo(0.2, 6);
+    expect(r.otherPalms).toHaveLength(1);
+  });
+  it("오른손이 둘이고 직전 위치가 없으면 점수 높은 손", () => {
+    const r = selectRightHand({ landmarks: [lm(0.2), lm(0.8)], handedness: [cat("Right", 0.9), cat("Right", 0.99)] }, OPTS);
+    expect(r.chosen?.palm.x).toBeCloseTo(0.8, 6);
+  });
 });
 ```
 
 - [ ] **Step 2: 실패 확인**
 
-Run: `npx vitest run tests/tracker.test.ts`
+Run: `npx vitest run tests/hands.test.ts`
 Expected: FAIL — 모듈 없음.
 
-- [ ] **Step 3: 구현**
-
-`src/tracker.ts`:
+- [ ] **Step 3: hands.ts 구현 (MediaPipe를 import하지 않는 순수 모듈)**
 
 ```ts
-import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
-import type { HandLandmarkerResult, NormalizedLandmark } from "@mediapipe/tasks-vision";
-import { CONFIG } from "./config";
+import { distance, palmCenter, type Point } from "./mapping";
 
-export type Delegate = "GPU" | "CPU";
-export interface RightHand {
-  landmarks: NormalizedLandmark[];
-  score: number;
+export interface LandmarkLike {
+  readonly x: number;
+  readonly y: number;
 }
-type Fileset = Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
-type HandsOnly = Pick<HandLandmarkerResult, "landmarks" | "handedness">;
+/** MediaPipe HandLandmarkerResult의 구조적 최소 타입 */
+export interface HandsLike {
+  landmarks: ReadonlyArray<ReadonlyArray<LandmarkLike>>;
+  handedness: ReadonlyArray<ReadonlyArray<{ categoryName: string; score: number }>>;
+}
+export interface ChosenHand {
+  landmarks: ReadonlyArray<LandmarkLike>;
+  score: number;
+  /** 정규화 좌표(0~1) 손바닥 중심 */
+  palm: Point;
+}
+export interface HandSelection {
+  chosen: ChosenHand | null;
+  /** 선택되지 않은 손들의 손바닥 중심(정규화) — 화면에 회색 점으로 표시 */
+  otherPalms: Point[];
+  /** 디버그/안내용 라벨 "Right:0.96" */
+  labels: string[];
+}
+export interface SelectOptions {
+  swap: boolean;
+  minScore: number;
+  prevPalm: Point | null;
+}
 
-/** handedness 라벨이 "Right"(swap이면 "Left")인 첫 손. 없으면 null. */
-export function pickRightHand(result: HandsOnly, swap: boolean): RightHand | null {
-  const wanted = swap ? "Left" : "Right";
+/**
+ * handedness 라벨이 "Right"(swap이면 "Left")이고 점수가 충분하며 손바닥이 화면 안인 손을 고른다.
+ * 후보가 여럿이면 직전 손바닥 위치에 가장 가까운 손, 직전 위치가 없으면 점수가 높은 손.
+ */
+export function selectRightHand(result: HandsLike, opts: SelectOptions): HandSelection {
+  const wanted = opts.swap ? "Left" : "Right";
+  const labels: string[] = [];
+  const candidates: ChosenHand[] = [];
+  const otherPalms: Point[] = [];
+
   for (let i = 0; i < result.handedness.length; i++) {
     const cat = result.handedness[i]?.[0];
     const lm = result.landmarks[i];
-    if (cat && lm && cat.categoryName === wanted) return { landmarks: lm, score: cat.score };
+    if (!cat || !lm || lm.length < 21) continue;
+    labels.push(`${cat.categoryName}:${cat.score.toFixed(2)}`);
+    const palm = palmCenter(lm);
+    const inside = palm.x >= 0 && palm.x <= 1 && palm.y >= 0 && palm.y <= 1;
+    if (cat.categoryName === wanted && cat.score >= opts.minScore && inside) {
+      candidates.push({ landmarks: lm, score: cat.score, palm });
+    } else {
+      otherPalms.push(palm);
+    }
   }
-  return null;
+
+  const first = candidates[0];
+  if (!first) return { chosen: null, otherPalms, labels };
+  let chosen = first;
+  if (candidates.length > 1) {
+    const prev = opts.prevPalm;
+    chosen = prev
+      ? candidates.reduce((a, b) => (distance(b.palm, prev) < distance(a.palm, prev) ? b : a))
+      : candidates.reduce((a, b) => (b.score > a.score ? b : a));
+    for (const c of candidates) if (c !== chosen) otherPalms.push(c.palm);
+  }
+  return { chosen, otherPalms, labels };
 }
+```
+
+- [ ] **Step 4: 통과 확인**
+
+Run: `npx vitest run tests/hands.test.ts`
+Expected: 8 passed.
+
+- [ ] **Step 5: tracker.ts 작성**
+
+```ts
+import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
+import { CONFIG } from "./config";
+import { selectRightHand, type HandSelection } from "./hands";
+import type { Point } from "./mapping";
+
+export type Delegate = "GPU" | "CPU";
+type Fileset = Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
+const EMPTY: HandSelection = { chosen: null, otherPalms: [], labels: [] };
 
 export class HandTracker {
   private landmarker: HandLandmarker | null = null;
   private lastTs = -1;
   delegate: Delegate = "GPU";
-  /** 디버그용: 마지막 프레임의 손 라벨들("Right:0.96") */
-  lastLabels: string[] = [];
 
+  /** wasm·모델 로드. GPU delegate 실패 시 CPU로 한 번 더 시도. 둘 다 실패하면 두 번째 예외를 던진다. */
   async init(): Promise<Delegate> {
     const fileset = await FilesetResolver.forVisionTasks(CONFIG.tracker.wasmPath);
     try {
@@ -1033,14 +1255,13 @@ export class HandTracker {
     });
   }
 
-  /** 현재 비디오 프레임에서 오른손. 타임스탬프는 단조 증가해야 한다. */
-  detectRightHand(video: HTMLVideoElement, nowMs: number): RightHand | null {
-    if (!this.landmarker) return null;
+  /** 현재 비디오 프레임에서 오른손 고르기. 타임스탬프는 단조 증가해야 한다. */
+  detect(video: HTMLVideoElement, nowMs: number, opts: { swap: boolean; prevPalm: Point | null }): HandSelection {
+    if (!this.landmarker) return EMPTY;
     const ts = Math.max(Math.floor(nowMs), this.lastTs + 1);
     this.lastTs = ts;
     const result = this.landmarker.detectForVideo(video, ts);
-    this.lastLabels = result.handedness.map((h) => `${h[0]?.categoryName ?? "?"}:${(h[0]?.score ?? 0).toFixed(2)}`);
-    return pickRightHand(result, CONFIG.tracker.swapHandedness);
+    return selectRightHand(result, { swap: opts.swap, minScore: CONFIG.tracker.minHandednessScore, prevPalm: opts.prevPalm });
   }
 
   close(): void {
@@ -1050,16 +1271,16 @@ export class HandTracker {
 }
 ```
 
-- [ ] **Step 4: 통과 + 타입 검사**
+- [ ] **Step 6: 타입 검사**
 
-Run: `npx vitest run tests/tracker.test.ts && npx tsc --noEmit`
-Expected: 4 passed, tsc 출력 없음.
+Run: `npx tsc --noEmit`
+Expected: 출력 없음. (`HandLandmarkerResult`가 `HandsLike`에 구조적으로 대입 가능해야 한다. 오류가 나면 `node_modules/@mediapipe/tasks-vision/vision.d.ts`의 `HandLandmarkerResult`·`Category`·`NormalizedLandmark`를 읽고 `HandsLike`를 맞춘다.)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/tracker.ts tests/tracker.test.ts
-git commit -m "feat: MediaPipe Hand Landmarker 래퍼(GPU→CPU 폴백)와 오른손 선택 + 테스트
+git add src/hands.ts src/tracker.ts tests/hands.test.ts
+git commit -m "feat: 오른손 선택 순수 함수(점수·화면 안·연속성) + MediaPipe 래퍼(GPU→CPU 폴백) + 테스트
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1086,9 +1307,10 @@ describe("wheelGeometry (1280x720)", () => {
     expect(g.cx).toBe(640);
     expect(g.cy).toBe(360);
   });
-  it("바깥 반지름 270, 쉼 원판 50.4, 글자 216", () => {
+  it("바깥 반지름 270, 쉼 원판 50.4(이탈 65.52), 글자 216", () => {
     expect(g.outerR).toBeCloseTo(270, 6);
     expect(g.restR).toBeCloseTo(50.4, 6);
+    expect(g.restExitR).toBeCloseTo(65.52, 6);
     expect(g.labelR).toBeCloseTo(216, 6);
   });
 });
@@ -1112,16 +1334,19 @@ export interface WheelGeometry {
   cy: number;
   outerR: number;
   restR: number;
+  restExitR: number;
   labelR: number;
 }
 
 export function wheelGeometry(width: number, height: number): WheelGeometry {
   const outerR = height * CONFIG.wheel.outerRadiusRatio;
+  const restR = height * CONFIG.wheel.restRadiusRatio;
   return {
     cx: width / 2,
     cy: height / 2,
     outerR,
-    restR: height * CONFIG.wheel.restRadiusRatio,
+    restR,
+    restExitR: restR * CONFIG.wheel.restExitFactor,
     labelR: outerR * CONFIG.wheel.labelRadiusRatio,
   };
 }
@@ -1137,6 +1362,7 @@ export interface Scene {
   palette: readonly string[];
   selected: number | null;
   hand: HandView | null;
+  otherPalms: Point[]; // 선택되지 않은 손(회색 점)
   openPercent: number;
   level: number;
   muted: boolean;
@@ -1150,6 +1376,14 @@ export interface Scene {
 /** "12시 기준 시계 방향 도" → canvas 라디안(3시 기준) */
 const rad = (deg: number): number => ((deg - 90) * Math.PI) / 180;
 const BLUE = "120,190,255";
+
+/** roundRect 미지원 브라우저 폴백 */
+function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  ctx.beginPath();
+  if (typeof ctx.roundRect === "function") ctx.roundRect(x, y, w, h, r);
+  else ctx.rect(x, y, w, h);
+  ctx.fill();
+}
 
 export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
   const { width: W, height: H } = s;
@@ -1204,7 +1438,15 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
   ctx.fillText("RIGHT HAND — CHORDS", g.cx, g.cy - g.outerR - H * 0.035);
   ctx.shadowBlur = 0;
 
-  // 손: 손끝 5개와 손바닥 중심
+  // 선택되지 않은 손: 회색 점
+  ctx.fillStyle = "rgba(200,200,200,0.5)";
+  for (const p of s.otherPalms) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 선택된 손: 손끝 5개와 손바닥 중심
   if (s.hand) {
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     for (const t of s.hand.tips) {
@@ -1255,9 +1497,7 @@ function hudBox(ctx: CanvasRenderingContext2D, x: number, y: number, label: stri
   const w = Math.round(H * 0.22);
   const h = Math.round(H * 0.1);
   ctx.fillStyle = "rgba(0,0,0,0.45)";
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 8);
-  ctx.fill();
+  roundedRect(ctx, x, y, w, h, 8);
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   ctx.fillStyle = "rgba(255,255,255,0.7)";
@@ -1269,27 +1509,28 @@ function hudBox(ctx: CanvasRenderingContext2D, x: number, y: number, label: stri
 }
 
 function centerMessage(ctx: CanvasRenderingContext2D, W: number, H: number, text: string): void {
+  const lines = text.split("\n");
+  const boxH = Math.max(H * 0.16, lines.length * H * 0.045 + H * 0.06);
   ctx.fillStyle = "rgba(0,0,0,0.6)";
-  ctx.fillRect(0, H / 2 - H * 0.08, W, H * 0.16);
+  ctx.fillRect(0, H / 2 - boxH / 2, W, boxH);
   ctx.fillStyle = "#fff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.font = `600 ${Math.round(H * 0.03)}px system-ui, sans-serif`;
-  const lines = text.split("\n");
-  lines.forEach((line, i) => ctx.fillText(line, W / 2, H / 2 + (i - (lines.length - 1) / 2) * H * 0.04));
+  lines.forEach((line, i) => ctx.fillText(line, W / 2, H / 2 + (i - (lines.length - 1) / 2) * H * 0.045));
 }
 ```
 
 - [ ] **Step 4: 통과 + 타입 검사**
 
 Run: `npx vitest run tests/overlay.test.ts && npx tsc --noEmit`
-Expected: 2 passed, tsc 출력 없음. `roundRect` 타입 오류가 나면 `lib`에 `"DOM"`이 들어 있는지 tsconfig를 확인한다(TypeScript 5.9의 lib.dom에 `roundRect`가 있다; 없다고 나오면 멈추고 보고).
+Expected: 2 passed, tsc 출력 없음. (`ctx.roundRect` 타입은 TypeScript 5.9.3 lib.dom.d.ts에 있음을 확인했다.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/overlay.ts tests/overlay.test.ts
-git commit -m "feat: 휠·HUD·음량 막대 Canvas 그리기 + 기하 테스트
+git commit -m "feat: 휠·HUD·음량 막대·다른 손 표시 Canvas 그리기 + 기하 테스트
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1315,28 +1556,36 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
       :root { color-scheme: dark; --accent: rgb(120, 190, 255); }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; background: #0b0c10; color: #fff; font-family: system-ui, -apple-system, sans-serif; }
-      #stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; background: #000; }
-      #video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-      #video { transform: scaleX(-1); } /* 거울 표시. 캔버스는 좌표를 1-x로 바꿔 그린다 */
-      .btn { position: absolute; z-index: 2; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 600 14px system-ui; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+      #stage { width: 100vw; height: 100vh; display: grid; place-items: center; background: #000; overflow: hidden; }
+      /* 비디오 비율의 프레임. 버튼·입력도 이 안에 두어 캔버스와 같은 박스를 공유한다 */
+      #frame { position: relative; aspect-ratio: 16 / 9; width: min(100vw, calc(100vh * 16 / 9)); }
+      #video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #video { transform: scaleX(-1); object-fit: cover; } /* 거울 표시. 캔버스는 좌표를 1-x로 바꿔 그린다 */
+      .btn { border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 600 14px system-ui; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
       .btn:disabled { opacity: 0.5; cursor: default; }
-      #reset { top: 16px; right: 16px; }
+      .btn:focus-visible { outline: 2px solid var(--accent); }
+      #reset { position: absolute; z-index: 2; top: 16px; right: 16px; }
       #bottom { position: absolute; z-index: 2; left: 16px; right: 56px; bottom: 44px; display: flex; gap: 8px; align-items: center; }
       #palette { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 500 14px ui-monospace, monospace; }
-      #palette-msg { position: absolute; z-index: 2; left: 16px; bottom: 80px; font: 500 13px system-ui; color: #9fe3a1; }
+      #palette.invalid { border-color: #ff8a80; }
+      #swap-label { display: flex; align-items: center; gap: 6px; font: 500 13px system-ui; white-space: nowrap; background: rgba(0,0,0,0.55); padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); }
+      #palette-msg { position: absolute; z-index: 2; left: 16px; bottom: 84px; font: 500 13px system-ui; color: #9fe3a1; }
       #palette-msg.error { color: #ff8a80; }
       #start { font-size: 15px; }
     </style>
   </head>
   <body>
     <div id="stage">
-      <video id="video" playsinline muted></video>
-      <canvas id="overlay"></canvas>
-      <button id="reset" class="btn" type="button">Reset</button>
-      <div id="palette-msg"></div>
-      <div id="bottom">
-        <input id="palette" type="text" spellcheck="false" autocomplete="off" aria-label="코드 팔레트" />
-        <button id="start" class="btn" type="button">Start</button>
+      <div id="frame">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <button id="reset" class="btn" type="button">Reset</button>
+        <div id="palette-msg"></div>
+        <div id="bottom">
+          <input id="palette" type="text" spellcheck="false" autocomplete="off" aria-label="코드 팔레트" />
+          <label id="swap-label"><input id="swap" type="checkbox" /> 좌우 바꾸기</label>
+          <button id="start" class="btn" type="button">Start</button>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
@@ -1348,7 +1597,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ```ts
 import { CONFIG } from "./config";
-import { openCamera } from "./camera";
+import { assertCameraSupported, openCamera, stopCamera } from "./camera";
 import { HandTracker } from "./tracker";
 import { ToneOutput } from "./audio";
 import { chordToMidi, parsePalette } from "./chords";
@@ -1358,15 +1607,16 @@ import {
   palmCenter,
   opennessRatio,
   opennessPercent,
-  isInRest,
+  distance,
   Ema,
   HoldTracker,
+  Hysteresis,
   TIP_IDS,
   type Point,
 } from "./mapping";
 import { drawScene, wheelGeometry, type Scene, type HandView } from "./overlay";
 
-type State = "IDLE" | "READY" | "PLAYING" | "ERROR";
+type State = "IDLE" | "STARTING" | "READY" | "PLAYING" | "ERROR";
 
 function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -1374,12 +1624,14 @@ function $<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
+const frame = $<HTMLDivElement>("frame");
 const video = $<HTMLVideoElement>("video");
 const canvas = $<HTMLCanvasElement>("overlay");
 const startBtn = $<HTMLButtonElement>("start");
 const resetBtn = $<HTMLButtonElement>("reset");
 const paletteInput = $<HTMLInputElement>("palette");
 const paletteMsg = $<HTMLElement>("palette-msg");
+const swapInput = $<HTMLInputElement>("swap");
 const ctx2d = canvas.getContext("2d");
 if (!ctx2d) throw new Error("Canvas 2D 컨텍스트를 만들 수 없습니다");
 const ctx: CanvasRenderingContext2D = ctx2d;
@@ -1391,27 +1643,40 @@ const hold = new HoldTracker(CONFIG.hold.lostGraceMs);
 const emaX = new Ema(CONFIG.smoothing.alpha);
 const emaY = new Ema(CONFIG.smoothing.alpha);
 const emaRatio = new Ema(CONFIG.smoothing.alpha);
+const sounding = new Hysteresis(CONFIG.openness.unmuteAbovePercent, CONFIG.openness.muteBelowPercent);
+let outsideRest: Hysteresis | null = null; // 반지름은 영상 크기에 따라 resize()에서 만든다
 
 let state: State = "IDLE";
 let palette: string[] = [...CONFIG.palette.default];
 let midiByIndex: number[][] = palette.map(chordToMidi);
+let swap: boolean = CONFIG.tracker.swapHandedness;
 let currentSector: number | null = null; // 소리가 나고 있는 칸
 let shownSector: number | null = null; // 화면에 표시 중인 칸(무음이어도)
 let handView: HandView | null = null;
+let otherPalms: Point[] = [];
+let prevPalmNorm: Point | null = null; // 직전 손바닥(정규화) — 두 오른손 중 연속성 선택용
 let openPercent = 0;
 let level = 0;
 let lastRatio = 0;
+let armed = true; // Reset 뒤에는 손이 한 번 사라지거나 쉼 원판을 지나야 다시 소리
+let audioSuspended = false;
 let message: string | null = "Start를 누르면 카메라와 소리가 켜집니다";
 let notice: string | null = null;
 let noticeUntil = 0;
 let lastVideoTime = -1;
+let lastFrameAt = 0;
+let consecutiveErrors = 0;
+let otherOnlySince: number | null = null;
+let lastOtherNotice = -Infinity;
+let labelsForDebug: string[] = [];
+let paletteMsgTimer: number | null = null;
 const frameTimes: number[] = [];
 
 function setState(s: State): void {
   state = s;
 }
 
-function showNotice(text: string, ms = 4000): void {
+function showNotice(text: string, ms: number = CONFIG.notice.defaultMs): void {
   notice = text;
   noticeUntil = performance.now() + ms;
 }
@@ -1432,12 +1697,38 @@ function silence(): void {
   level = 0;
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = window.setTimeout(() => reject(new Error(`TIMEOUT: ${what}가 ${ms} ms 안에 끝나지 않았습니다`)), ms);
+    p.then(
+      (v) => {
+        window.clearTimeout(t);
+        resolve(v);
+      },
+      (e: unknown) => {
+        window.clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 // ── 팔레트 ──────────────────────────────────────────────
 function applyPalette(chords: string[]): void {
   palette = chords;
   midiByIndex = palette.map(chordToMidi);
   shownSector = null;
   silence();
+}
+
+function setPaletteMsg(text: string, isError: boolean): void {
+  paletteMsg.textContent = text;
+  paletteMsg.classList.toggle("error", isError);
+  if (paletteMsgTimer !== null) window.clearTimeout(paletteMsgTimer);
+  paletteMsgTimer = window.setTimeout(() => {
+    paletteMsg.textContent = "";
+    paletteMsgTimer = null;
+  }, CONFIG.notice.defaultMs);
 }
 
 function loadPalette(): void {
@@ -1457,12 +1748,12 @@ function loadPalette(): void {
 paletteInput.addEventListener("change", () => {
   const parsed = parsePalette(paletteInput.value, CONFIG.palette.min, CONFIG.palette.max);
   if (!parsed.ok) {
-    paletteMsg.textContent = parsed.invalid.length ? `${parsed.reason}: ${parsed.invalid.join(", ")}` : parsed.reason;
-    paletteMsg.classList.add("error");
+    paletteInput.classList.add("invalid");
+    setPaletteMsg(parsed.invalid.length ? `${parsed.reason}: ${parsed.invalid.join(", ")}` : parsed.reason, true);
     return;
   }
-  paletteMsg.textContent = `${parsed.chords.length}개 코드 적용`;
-  paletteMsg.classList.remove("error");
+  paletteInput.classList.remove("invalid");
+  setPaletteMsg(`${parsed.chords.length}개 코드 적용`, false);
   applyPalette(parsed.chords);
   paletteInput.value = parsed.chords.join(" ");
   try {
@@ -1472,42 +1763,120 @@ paletteInput.addEventListener("change", () => {
   }
 });
 
-// ── 시작 / 리셋 ──────────────────────────────────────────
+// 거부된 입력은 포커스를 잃을 때 현재 팔레트로 되돌려 화면과 입력창이 어긋나지 않게 한다
+paletteInput.addEventListener("blur", () => {
+  if (paletteInput.classList.contains("invalid")) {
+    paletteInput.value = palette.join(" ");
+    paletteInput.classList.remove("invalid");
+  }
+});
+
+// ── 좌우 바꾸기 ──────────────────────────────────────────
+function loadSwap(): void {
+  try {
+    const saved = localStorage.getItem(CONFIG.tracker.swapStorageKey);
+    if (saved === "1" || saved === "0") swap = saved === "1";
+  } catch {
+    /* 무시 */
+  }
+  swapInput.checked = swap;
+}
+
+swapInput.addEventListener("change", () => {
+  swap = swapInput.checked;
+  prevPalmNorm = null;
+  try {
+    localStorage.setItem(CONFIG.tracker.swapStorageKey, swap ? "1" : "0");
+  } catch {
+    /* 무시 */
+  }
+});
+
+// ── 시작 / 리셋 / 오류 ──────────────────────────────────
 function describeError(e: unknown): string {
   const name = e instanceof DOMException ? e.name : "";
-  const text = e instanceof Error ? e.message : String(e);
+  const text = e instanceof Error ? e.message : e instanceof Event ? `리소스 로드 실패 (${e.type})` : String(e);
+  for (const prefix of ["UNSUPPORTED: ", "ASSET_MISSING: ", "TIMEOUT: ", "AUDIO: "]) {
+    if (text.startsWith(prefix)) return text.slice(prefix.length);
+  }
   if (name === "NotAllowedError") return "카메라 권한이 거부되었습니다.\n주소창 왼쪽 아이콘 → 카메라 → 허용 후 '다시 시도'";
   if (name === "NotFoundError" || name === "OverconstrainedError") return "카메라를 찾을 수 없습니다. 연결을 확인하세요.";
   if (name === "NotReadableError") return "다른 앱이 카메라를 쓰고 있습니다. 그 앱을 닫고 '다시 시도'";
-  if (/wasm|\.task|fetch|404|Failed to load/i.test(text)) return "손 추적 모델 또는 wasm 파일을 찾지 못했습니다.\n터미널에서 npm run setup 실행 후 새로고침";
   return `시작 실패: ${text}`;
 }
 
+/** 모델·wasm 파일이 서버에 있는지 HEAD로 확인. 없으면 결정적인 메시지로 실패한다. */
+async function checkAssets(): Promise<void> {
+  const urls = [CONFIG.tracker.modelPath, `${CONFIG.tracker.wasmPath}/vision_wasm_internal.wasm`];
+  for (const u of urls) {
+    const r = await fetch(u, { method: "HEAD" });
+    if (!r.ok) throw new Error(`ASSET_MISSING: ${u} 를 찾지 못했습니다 (HTTP ${r.status}).\n터미널에서 npm run setup 실행 후 새로고침`);
+  }
+}
+
 function resize(): void {
-  canvas.width = video.videoWidth || 1280;
-  canvas.height = video.videoHeight || 720;
+  const w = video.videoWidth || 1280;
+  const h = video.videoHeight || 720;
+  canvas.width = w;
+  canvas.height = h;
+  frame.style.aspectRatio = `${w} / ${h}`;
+  frame.style.width = `min(100vw, calc(100vh * ${w} / ${h}))`;
+  const g = wheelGeometry(w, h);
+  outsideRest = new Hysteresis(g.restExitR, g.restR);
+}
+
+function enterError(text: string): void {
+  silence();
+  handView = null;
+  otherPalms = [];
+  shownSector = null;
+  stopCamera(video);
+  setState("ERROR");
+  message = text;
+  startBtn.disabled = false;
+  startBtn.textContent = "다시 시도";
+  startBtn.focus();
+}
+
+function onCameraEnded(): void {
+  if (state === "ERROR" || state === "IDLE") return;
+  enterError("카메라 연결이 끊어졌습니다(뽑힘 또는 다른 앱이 사용 중).\n'다시 시도'를 누르세요");
 }
 
 startBtn.addEventListener("click", async () => {
   startBtn.disabled = true;
+  setState("STARTING");
+  // 사용자 제스처 컨텍스트 안에서 동기적으로 시작. 거부는 아래 await에서 받되, 그 전에 다른 단계가 실패해도 미처리 거부가 남지 않게 한다.
+  const audioReady = output.start().catch((e: unknown) => {
+    throw new Error(`AUDIO: 소리를 켤 수 없습니다 (${e instanceof Error ? e.message : String(e)})`);
+  });
+  audioReady.catch(() => {});
   try {
-    const audioReady = output.start(); // 사용자 제스처 컨텍스트 안에서 즉시 시작
-    message = "카메라 여는 중…";
-    await openCamera(video);
-    resize();
+    assertCameraSupported();
+    message = "파일 확인 중…";
+    await withTimeout(checkAssets(), CONFIG.startup.assetCheckMs, "자산 확인");
+    message = "소리 켜는 중…";
+    await withTimeout(audioReady, CONFIG.startup.audioMs, "소리 켜기");
     message = "손 추적 모델 불러오는 중…";
-    await audioReady;
-    const delegate = await tracker.init();
+    const delegate = await withTimeout(tracker.init(), CONFIG.startup.modelMs, "모델 로드");
+    message = "카메라 여는 중… (권한을 허용해 주세요)";
+    await withTimeout(openCamera(video, onCameraEnded), CONFIG.startup.cameraMs, "카메라 열기");
+    resize();
     message = null;
+    lastVideoTime = -1;
+    lastFrameAt = performance.now();
+    consecutiveErrors = 0;
     setState("READY");
     startBtn.textContent = "실행 중";
     if (delegate === "CPU") showNotice("GPU 모드 실패 → CPU 모드(느림, 약 107 ms/프레임)", 6000);
+    if (!output.isRunning()) {
+      audioSuspended = true;
+      showNotice("소리가 아직 꺼져 있습니다. 화면을 한 번 클릭하세요", 6000);
+    }
   } catch (e) {
     console.error(e);
-    setState("ERROR");
-    message = describeError(e);
-    startBtn.disabled = false;
-    startBtn.textContent = "다시 시도";
+    tracker.close();
+    enterError(describeError(e));
   }
 });
 
@@ -1515,14 +1884,43 @@ resetBtn.addEventListener("click", () => {
   silence();
   shownSector = null;
   handView = null;
+  otherPalms = [];
+  prevPalmNorm = null;
   hold.reset();
   resetFilters();
+  sounding.reset();
+  outsideRest?.reset();
   openPercent = 0;
+  armed = false;
+  if (state === "READY") showNotice("초기화됨 — 손을 내렸다 올리면 다시 소리가 납니다", 3000);
 });
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) silence();
 });
+
+// 오디오 컨텍스트가 멈추면(절전 복귀·출력 장치 전환) 안내하고, 다음 클릭/키에서 재개
+output.onStateChange((running) => {
+  audioSuspended = !running;
+  if (!running && (state === "READY" || state === "PLAYING")) {
+    silence();
+    showNotice("오디오가 일시중지되었습니다. 화면을 클릭하면 다시 켜집니다", 8000);
+  }
+});
+async function resumeAudioIfNeeded(): Promise<void> {
+  if (!audioSuspended) return;
+  try {
+    await output.resume();
+    if (output.isRunning()) {
+      audioSuspended = false;
+      showNotice("소리 켜짐", 1500);
+    }
+  } catch (e) {
+    console.warn("오디오 재개 실패", e);
+  }
+}
+document.addEventListener("pointerdown", () => void resumeAudioIfNeeded());
+document.addEventListener("keydown", () => void resumeAudioIfNeeded());
 
 // ── 프레임 처리 ──────────────────────────────────────────
 function processFrame(now: number): void {
@@ -1531,21 +1929,43 @@ function processFrame(now: number): void {
   const geo = wheelGeometry(W, H);
   const center: Point = { x: geo.cx, y: geo.cy };
 
-  const hand = tracker.detectRightHand(video, now);
+  const sel = tracker.detect(video, now, { swap, prevPalm: prevPalmNorm });
+  labelsForDebug = sel.labels;
+  otherPalms = sel.otherPalms.map((p) => ({ x: (1 - p.x) * W, y: p.y * H }));
+  const hand = sel.chosen;
+
+  // 다른 손만 보일 때 안내 (1초 이상 지속, 5초에 한 번)
+  if (!hand && sel.labels.length > 0) {
+    otherOnlySince ??= now;
+    if (now - otherOnlySince > CONFIG.notice.leftOnlyAfterMs && now - lastOtherNotice > CONFIG.notice.leftOnlyRepeatMs) {
+      showNotice("오른손이 보이지 않습니다(다른 손만 감지). 오른손을 들거나 '좌우 바꾸기'를 켜 보세요", 3000);
+      lastOtherNotice = now;
+    }
+  } else {
+    otherOnlySince = null;
+  }
+
+  const prevSeen = hold.lastSeenMs;
   const present = hold.update(hand !== null, now);
 
   if (hand) {
-    // 거울 표시 좌표로 변환: x → (1 - x)
+    // 잠깐(≤100ms) 끊긴 건 연속으로 보고, 더 길게 사라졌다 나타나면 필터를 초기화해 이전 위치에서 끌려오지 않게 한다
+    if (prevSeen !== null && now - prevSeen > CONFIG.smoothing.resetAfterGapMs) resetFilters();
+    prevPalmNorm = hand.palm;
+
+    // 거울 표시 좌표(픽셀)로 변환: x → (1 - x). 펼침 비율도 이 등방 좌표로 계산한다
     const pts: Point[] = hand.landmarks.map((l) => ({ x: (1 - l.x) * W, y: l.y * H }));
     const rawPalm = palmCenter(pts);
     const palm: Point = { x: emaX.next(rawPalm.x), y: emaY.next(rawPalm.y) };
-    const ratio = emaRatio.next(opennessRatio(hand.landmarks));
+    const ratio = emaRatio.next(opennessRatio(pts));
     lastRatio = ratio;
     openPercent = opennessPercent(ratio, CONFIG.openness.closedRatio, CONFIG.openness.openRatio);
     handView = { palm, tips: TIP_IDS.map((i) => pts[i] ?? palm) };
 
-    if (isInRest(center, palm, geo.restR)) {
+    const isOutside = outsideRest ? outsideRest.update(distance(center, palm)) : true;
+    if (!isOutside) {
       shownSector = null;
+      armed = true;
       silence();
       return;
     }
@@ -1553,12 +1973,17 @@ function processFrame(now: number): void {
     const sector = nextSector(shownSector, deg, palette.length, CONFIG.sector.deadZoneDeg);
     shownSector = sector;
 
-    if (openPercent < CONFIG.openness.muteBelowPercent) {
+    if (!sounding.update(openPercent) || !armed) {
+      silence();
+      return;
+    }
+    const midi = midiByIndex[sector] ?? [];
+    if (midi.length === 0) {
       silence();
       return;
     }
     if (state !== "PLAYING" || sector !== currentSector) {
-      output.play(midiByIndex[sector] ?? []);
+      output.play(midi);
       currentSector = sector;
       setState("PLAYING");
     }
@@ -1571,8 +1996,12 @@ function processFrame(now: number): void {
     // 유예 500ms 초과: 완전히 놓는다
     handView = null;
     shownSector = null;
+    prevPalmNorm = null;
     openPercent = 0;
+    armed = true;
     resetFilters();
+    sounding.reset();
+    outsideRest?.reset();
     silence();
   }
   // 유예 시간 안이면 마지막 상태 유지
@@ -1589,37 +2018,74 @@ function fpsNow(now: number): number {
 
 function draw(now: number): void {
   if (notice && now > noticeUntil) notice = null;
+  const active = state === "READY" || state === "PLAYING";
   const scene: Scene = {
     width: canvas.width,
     height: canvas.height,
     palette,
     selected: shownSector,
     hand: handView,
+    otherPalms,
     openPercent,
     level,
     muted: state !== "PLAYING",
-    fps: state === "IDLE" ? 0 : fpsNow(now),
-    delegate: state === "IDLE" || state === "ERROR" ? null : tracker.delegate,
+    fps: active ? fpsNow(now) : 0,
+    delegate: active ? tracker.delegate : null,
     message,
     notice,
-    debug: debug ? `ratio ${lastRatio.toFixed(2)} | ${tracker.lastLabels.join(" ") || "no hand"}` : null,
+    debug: debug ? `ratio ${lastRatio.toFixed(2)} | ${labelsForDebug.join(" ") || "no hand"} | ${state}${armed ? "" : " (Reset 대기)"}` : null,
   };
   drawScene(ctx, scene);
 }
 
 function loop(now: number): void {
-  if ((state === "READY" || state === "PLAYING") && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
-    lastVideoTime = video.currentTime;
-    processFrame(now);
-    frameTimes.push(now);
+  try {
+    const active = state === "READY" || state === "PLAYING";
+    if (active) {
+      if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        lastFrameAt = now;
+        processFrame(now);
+        frameTimes.push(now);
+      } else if (state === "PLAYING" && now - lastFrameAt > CONFIG.hold.lostGraceMs) {
+        // 워치독: 영상이 멈추면(트랙 종료·절전·다른 앱) 프레임 없이도 500ms 안에 끈다
+        handView = null;
+        shownSector = null;
+        silence();
+        showNotice("영상이 멈춰 소리를 껐습니다", 3000);
+      }
+    }
+    consecutiveErrors = 0;
+  } catch (e) {
+    consecutiveErrors++;
+    console.error(e);
+    silence();
+    if (consecutiveErrors >= CONFIG.loop.maxConsecutiveErrors) {
+      tracker.close();
+      enterError(`처리 중 오류가 반복됩니다.\n${describeError(e)}`);
+    }
   }
-  draw(now);
+  try {
+    draw(now);
+  } catch (e) {
+    console.error(e);
+  }
   requestAnimationFrame(loop);
 }
 
 // ── 부팅 ────────────────────────────────────────────────
 resize();
 loadPalette();
+loadSwap();
+try {
+  assertCameraSupported();
+} catch (e) {
+  message = describeError(e);
+  startBtn.disabled = true;
+}
+if (/Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg/.test(navigator.userAgent)) {
+  showNotice("Safari는 테스트되지 않았습니다. Chrome을 권장합니다", 6000);
+}
 requestAnimationFrame(loop);
 ```
 
@@ -1632,12 +2098,15 @@ Expected: tsc 출력 없음, 테스트 전부 PASS.
 
 Run: `npm run dev` 후 Chrome에서 `http://127.0.0.1:5173` 열기.
 확인 순서:
-1. 휠과 12개 코드 이름이 보이고 글자가 뒤집히지 않는다.
-2. Start → 카메라 허용 → 거울처럼 보이는 영상 위에 휠.
-3. 오른손을 들면 손끝 점 5개와 파란 손바닥 점이 **손 위치와 일치**한다(좌우가 어긋나면 `1 - l.x` 변환을 의심).
-4. 손을 1시 방향에 두면 Em6 칸이 파랗게 되고 소리가 난다. 주먹을 쥐면 멈춘다.
-5. 좌하단에 `~30 fps · GPU`.
-6. `http://127.0.0.1:5173/?debug=1`로 열면 좌하단에 `ratio 1.xx | Right:0.9x` 가 보인다.
+1. 휠과 12개 코드 이름이 보이고 글자가 뒤집히지 않는다. 창 크기를 바꿔도 Reset·입력창이 영상 프레임 안에 머문다.
+2. Start → 중앙 메시지가 "파일 확인 중 → 소리 켜는 중 → 모델 불러오는 중 → 카메라 여는 중" 순서로 바뀌고 카메라 허용 뒤 거울 영상 위에 휠.
+3. 오른손을 들면 손끝 점 5개와 파란 손바닥 점이 **손 위치와 일치**한다(좌우가 어긋나면 `1 - l.x` 변환을 의심). 왼손을 들면 회색 점 1개가 찍히고 1초 뒤 상단에 안내.
+4. 손을 1시 방향에 두면 Em6 칸이 파랗게 되고 소리가 난다. 주먹을 쥐면 멈추고, 다시 펴면(20% 이상) 난다.
+5. 손을 12칸 한 바퀴 2초 안에 훑어도 콘솔에 "Max polyphony exceeded" 경고가 없다.
+6. 좌하단에 `~30 fps · GPU`.
+7. `?debug=1`로 열면 좌하단에 `ratio 1.xx | Right:0.9x | PLAYING`.
+8. 연주 중 카메라를 손으로 완전히 가리거나(손 소실) Zoom 등으로 카메라를 뺏으면 0.5초 안에 무음. 뺏긴 경우 "카메라 연결이 끊어졌습니다" + '다시 시도'.
+9. `public/wasm`을 잠시 다른 이름으로 바꾸고 새로고침 → Start → "…vision_wasm_internal.wasm 를 찾지 못했습니다 (HTTP 404)" 메시지. 원래대로 되돌리고 '다시 시도'로 복구.
 
 문제가 있으면 멈추고 증상·콘솔 오류를 기록한다(Task 11에서 handedness·보정값을 다룬다).
 
@@ -1645,7 +2114,7 @@ Run: `npm run dev` 후 Chrome에서 `http://127.0.0.1:5173` 열기.
 
 ```bash
 git add index.html src/main.ts
-git commit -m "feat: 화면 구성과 상태 전이(IDLE→READY→PLAYING), 팔레트 입력, Reset
+git commit -m "feat: 화면 구성과 상태 전이(시작 절차 타임아웃, 루프 예외 격리, 워치독, 히스테리시스, 좌우 바꾸기)
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1677,14 +2146,16 @@ except Exception:
 ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 REL="${FILE#"$ROOT"/}"
 case "$REL" in
-  src/mapping.ts) echo "[impact] mapping.ts → 코드 선택(각도·데드존)·펼침%·유지 규칙 전부. tests/mapping.test.ts 실행, 칸 경계 깜빡임 수동 확인" ;;
-  src/chords.ts) echo "[impact] chords.ts → 팔레트 파싱·MIDI 번호. tests/chords.test.ts 실행, 12개 기본 코드 소리 확인" ;;
-  src/audio.ts|src/output.ts) echo "[impact] 소리 출력 → ChordOutput 인터페이스 변경 시 2차 midiOut.ts 호환 확인, 코드 변경 시 release→attack 확인" ;;
-  src/tracker.ts) echo "[impact] 손 추적 → swapHandedness 실측 재확인, GPU→CPU 폴백 확인, tests/tracker.test.ts" ;;
-  src/config.ts) echo "[impact] 상수 → 보정값(closed/open)·데드존·유예 변경 시 수동 합격 기준 5개 재수행" ;;
-  src/main.ts) echo "[impact] 상태 전이 → 수동 합격 기준 5개 재수행(fps≥25, 경계 5초 불변, 주먹 100ms 무음, Reset 즉시 무음, 손 이탈 0.5초 무음)" ;;
-  src/overlay.ts|index.html) echo "[impact] 화면 → 거울 좌표(x→1-x) 일치, HUD 글자 반전 여부, tests/overlay.test.ts" ;;
-  scripts/setup-assets.sh|.gitignore) echo "[impact] 자산 준비 → 새 clone에서 npm run setup 재검증, public/models·public/wasm 미추적 확인" ;;
+  src/mapping.ts) echo "[impact] mapping.ts → 코드 선택(각도·데드존)·펼침%·히스테리시스·유지 규칙 전부. tests/mapping.test.ts 실행, 칸 경계·쉼 원판·15/20% 경계 깜빡임 수동 확인" ;;
+  src/chords.ts) echo "[impact] chords.ts → 팔레트 파싱·표기 정규화·MIDI 번호. tests/chords.test.ts 실행, 12개 기본 코드 소리 확인" ;;
+  src/hands.ts) echo "[impact] hands.ts → 오른손 선택(점수·화면 안·연속성). tests/hands.test.ts 실행, 두 손 동시 노출 수동 확인" ;;
+  src/audio.ts|src/output.ts) echo "[impact] 소리 출력 → ChordOutput 인터페이스 변경 시 2차 midiOut.ts 호환 확인, 코드 전환 시 release→attack, maxPolyphony 32 유지, 절전 복귀 재개" ;;
+  src/tracker.ts) echo "[impact] 손 추적 → GPU→CPU 폴백 확인, 타임스탬프 단조 증가" ;;
+  src/camera.ts) echo "[impact] 카메라 → 재시도 시 이전 스트림 정리, 트랙 ended 콜백, 비보안 컨텍스트 메시지" ;;
+  src/config.ts) echo "[impact] 상수 → 보정값(closed/open)·데드존·유예·타임아웃 변경 시 수동 합격 기준 재수행" ;;
+  src/main.ts) echo "[impact] 상태 전이 → 수동 합격 기준 전부 재수행(fps≥25, 경계 5초 불변, 주먹 100ms 무음, Reset, 손 이탈 0.5초, 카메라 뺏김 0.5초, 12칸 훑기 Note dropped 없음)" ;;
+  src/overlay.ts|index.html) echo "[impact] 화면 → 거울 좌표(x→1-x) 일치, HUD 글자 반전 여부, 프레임 비율, tests/overlay.test.ts" ;;
+  scripts/setup-assets.sh|scripts/verify-all.sh|.gitignore) echo "[impact] 자산/검증 → 새 clone에서 npm run setup 재검증, macOS/Linux 공용(wc -c), public/models·public/wasm 미추적 확인" ;;
   package.json) echo "[impact] 의존성 → tonal 6.4.3 고정 유지 확인, npm run verify" ;;
 esac
 exit 0
@@ -1733,9 +2204,11 @@ description: Hand Chord Wheel 커밋 전 확정적 검증. 타입 검사·단위
 ## 수동 합격 기준 (main.ts·config.ts·mapping.ts 변경 시)
 - Chrome 내장 카메라에서 25 fps 이상
 - 칸 경계에 손을 5초 두어도 코드 불변
-- 주먹 쥐면 100 ms 안에 무음
-- Reset 즉시 무음
+- 주먹 쥐면 100 ms 안에 무음, 다시 펴면(20% 이상) 소리
+- Reset → 즉시 무음, 손을 내렸다 올리기 전까지 무음 유지
 - 손을 화면 밖으로 빼면 0.5초 뒤 무음
+- 연주 중 카메라를 다른 앱이 가져가면 0.5초 안에 무음 + '다시 시도' 안내
+- 12칸을 2초 안에 한 바퀴 훑어도 콘솔에 "Max polyphony exceeded" 없음
 ```
 
 `.claude/skills/music-verifier/gotchas.md`:
@@ -1755,6 +2228,21 @@ description: Hand Chord Wheel 커밋 전 확정적 검증. 타입 검사·단위
    **규칙** 비디오만 반전하고 캔버스는 좌표를 `1 - x`로 변환해 그린다
    **적용 시점** overlay.ts·index.html 수정 때
 
+3. **증상** 코드를 빠르게 바꾸면 일부 음이 빠진 얇은 화음이 남
+   **원인** Tone.js PolySynth는 놓은 음도 여음(release 0.4초)이 끝날 때까지 보이스 슬롯을 차지. maxPolyphony가 작으면 "Max polyphony exceeded. Note dropped."
+   **규칙** maxPolyphony는 32(Tone 기본값) 이상 유지
+   **적용 시점** audio.ts·config.audio 수정 때
+
+4. **증상** 손을 옆으로 눕히면 주먹인데 소리가 새거나 편 손이 100%에 못 미침
+   **원인** 펼침 비율을 MediaPipe 정규화 좌표(가로·세로 단위가 다름)로 계산
+   **규칙** opennessRatio는 반드시 픽셀 좌표(pts)로 호출
+   **적용 시점** main.ts processFrame 수정 때
+
+5. **증상** Linux에서 `npm run setup`이 모델을 받고도 "크기 0 != 7819105"로 실패
+   **원인** `stat -f%z`는 macOS 전용
+   **규칙** 파일 크기는 `wc -c <`로 잰다
+   **적용 시점** 셸 스크립트 작성 때
+
 (이후 버그를 만날 때마다 추가)
 ```
 
@@ -1765,14 +2253,16 @@ description: Hand Chord Wheel 커밋 전 확정적 검증. 타입 검사·단위
 
 | 변경 파일 | 영향 | 자동 검증 | 수동 확인 |
 |---|---|---|---|
-| src/mapping.ts | 코드 선택, 펼침%, 유지 규칙 | tests/mapping.test.ts | 경계 깜빡임, 주먹 무음 |
-| src/chords.ts | 팔레트, MIDI 번호 | tests/chords.test.ts | 12개 코드 소리 |
-| src/audio.ts, src/output.ts | 소리 | tsc | 코드 전환 시 끊김/겹침 |
-| src/tracker.ts | 손 검출, 좌우 라벨 | tests/tracker.test.ts | ?debug=1 라벨 확인 |
-| src/overlay.ts, index.html | 화면 | tests/overlay.test.ts | 글자 반전, 손 점 위치 |
-| src/main.ts | 상태 전이 | tsc | 수동 합격 기준 5개 |
-| src/config.ts | 모든 임계값 | 전체 테스트 | 수동 합격 기준 5개 |
-| scripts/setup-assets.sh, .gitignore | 자산/저장소 | verify-all.sh 미추적 검사 | 새 clone 재현 |
+| src/mapping.ts | 코드 선택, 펼침%, 히스테리시스, 유지 규칙 | tests/mapping.test.ts | 경계 깜빡임, 주먹 무음/재개 |
+| src/chords.ts | 팔레트, 표기 정규화, MIDI 번호 | tests/chords.test.ts | 12개 코드 소리 |
+| src/hands.ts | 오른손 선택 | tests/hands.test.ts | 두 손 동시 노출, 왼손만 노출 안내 |
+| src/audio.ts, src/output.ts | 소리, 컨텍스트 상태 | tsc | 코드 전환 시 끊김/겹침, 절전 복귀 |
+| src/camera.ts | 카메라 열기/닫기/종료 감지 | tsc | 재시도 누수(LED), 카메라 뺏김 |
+| src/tracker.ts | 손 검출, GPU 폴백 | tsc | ?debug=1 라벨 확인 |
+| src/overlay.ts, index.html | 화면 | tests/overlay.test.ts | 글자 반전, 손 점 위치, 프레임 비율 |
+| src/main.ts | 상태 전이, 시작 절차, 루프 | tsc | 수동 합격 기준 7개 |
+| src/config.ts | 모든 임계값·타임아웃 | 전체 테스트 | 수동 합격 기준 7개 |
+| scripts/*.sh, .gitignore | 자산/저장소 | verify-all.sh 미추적 검사 | 새 clone 재현 |
 ```
 
 `.claude/skills/music-verifier/scripts/verify-all.sh`:
@@ -1791,7 +2281,7 @@ exec bash "$ROOT/scripts/verify-all.sh"
 ```markdown
 ---
 name: music-debugging
-description: Hand Chord Wheel 증상별 진단 런북. 소리 안 남, 손 인식 안 됨, 좌우 반대, 코드 깜빡임, 느림, 모델 로드 실패를 다룬다. "안 돼", "소리가", "인식이" 같은 증상 보고에 사용.
+description: Hand Chord Wheel 증상별 진단 런북. 소리 안 남, 손 인식 안 됨, 좌우 반대, 코드 깜빡임, 느림, 모델 로드 실패, 시작 중 멈춤을 다룬다. "안 돼", "소리가", "인식이" 같은 증상 보고에 사용.
 ---
 
 # music-debugging
@@ -1799,8 +2289,8 @@ description: Hand Chord Wheel 증상별 진단 런북. 소리 안 남, 손 인�
 ## 흐름
 1. 증상을 `references/symptom-map.md`에서 찾는다.
 2. 먼저 `bash .claude/skills/music-debugging/scripts/check-assets.sh`로 자산·버전을 확인한다.
-3. 브라우저는 Chrome인지, 주소가 `http://127.0.0.1:5173` 또는 `localhost`인지 확인한다(파일 직접 열기·다른 호스트명은 카메라 불가).
-4. `?debug=1`로 열어 좌하단 `ratio`와 handedness 라벨을 읽는다.
+3. 브라우저는 Chrome인지, 주소가 `http://127.0.0.1:5173` 또는 `localhost`인지 확인한다(파일 직접 열기·LAN 주소는 카메라 불가 — 화면에 안내가 뜬다).
+4. `?debug=1`로 열어 좌하단 `ratio`, handedness 라벨, 상태(READY/PLAYING, Reset 대기)를 읽는다.
 5. 원인을 코드로 확인한 뒤에만 수정한다. 고치면 verifier 실행 + gotchas 추가.
 ```
 
@@ -1811,15 +2301,19 @@ description: Hand Chord Wheel 증상별 진단 런북. 소리 안 남, 손 인�
 
 | 증상 | 가능한 원인 | 확인 | 조치 |
 |---|---|---|---|
-| Start 눌러도 카메라 안 켜짐 | 권한 거부 / 다른 앱 점유 / http가 localhost 아님 | 중앙 메시지의 오류 이름, Chrome 자물쇠 아이콘 | 권한 허용 후 '다시 시도'; 다른 앱 종료; 127.0.0.1 사용 |
-| "모델 또는 wasm 파일을 찾지 못했습니다" | `npm run setup` 미실행, public/ 경로 변경 | check-assets.sh | `npm run setup` 후 새로고침 |
-| 소리가 전혀 안 남 | Tone.start가 제스처 밖에서 호출 / 음량 0 / 시스템 출력 장치 | 콘솔 `Tone.getContext().state`, 음량 막대 | Start를 클릭으로 시작; 손 펼침 15% 이상인지 |
-| 손이 있는데 인식 안 됨 | 왼손만 보임 / 라벨 반대 / 조명 어두움 | `?debug=1` 라벨 | 오른손 사용; `config.tracker.swapHandedness` 토글 후 재확인 |
+| Start 눌러도 카메라 안 켜짐 | 권한 거부 / 다른 앱 점유 / 비보안 주소 | 중앙 메시지(오류 종류별 한국어 안내) | 권한 허용 후 '다시 시도'; 다른 앱 종료; 127.0.0.1 사용 |
+| "…를 찾지 못했습니다 (HTTP 404)" | `npm run setup` 미실행, public/ 경로 변경 | check-assets.sh | `npm run setup` 후 새로고침 |
+| "…ms 안에 끝나지 않았습니다" | 오디오 장치 전환 중 / 모델 로드 지연 / 권한 팝업 방치 | 어느 단계 메시지에서 멈췄는지 | 장치 연결 확인 후 '다시 시도' |
+| 소리가 전혀 안 남 (HUD는 움직임) | AudioContext 일시중지(절전·장치 전환) / 출력 장치 | 상단 노란 알림, 콘솔 `Tone.getContext().state` | 화면 클릭(자동 재개); 시스템 출력 장치 확인 |
+| 손이 있는데 인식 안 됨 | 왼손만 보임 / 라벨 반대 / 점수 0.7 미만(가장자리) / 조명 | `?debug=1` 라벨, 회색 점 여부 | 오른손 사용; '좌우 바꾸기' 체크; 손을 화면 안쪽으로 |
 | 손 점이 실제 손과 좌우 반대 | 좌표 변환(1-x) 누락/중복 | main.ts processFrame | 변환 한 번만 적용 |
 | 코드가 경계에서 깜빡임 | 데드존 작음 / 필터 꺼짐 | config.sector.deadZoneDeg, smoothing.alpha | 데드존 3→5도, alpha 0.5→0.35 |
+| 쉼 원판/주먹 경계에서 따다닥 재어택 | 히스테리시스 간격 부족 | config.wheel.restExitFactor, openness.unmuteAbovePercent | 1.3→1.5, 20→25 |
 | 주먹 쥐어도 소리 안 멈춤 | closed/open 보정값이 사용자 손과 안 맞음 | `?debug=1` ratio 읽기 | Task 11 절차로 재실측 |
+| Reset 뒤 소리가 안 남 | Reset 대기(armed=false) 상태 — 의도된 동작 | `?debug=1`에 "(Reset 대기)" | 손을 내렸다 올리거나 쉼 원판을 지나기 |
 | fps 15 미만 | CPU 모드 폴백 / 다른 탭·앱 GPU 점유 | 좌하단 `CPU` 표시 | 콘솔 GPU 실패 원인 확인; 해상도 1280→960 |
-| 코드 전환 시 음이 겹침/끊김 | release·attack 순서, lookAhead | audio.ts play() | heldHz 관리 확인; lookAhead 0.02→0.05 |
+| 코드 전환 시 음이 빠짐 | maxPolyphony가 32 미만으로 바뀜 | 콘솔 "Max polyphony exceeded" | config.audio.maxPolyphony 32 |
+| 영상이 멈추고 "영상이 멈춰 소리를 껐습니다" | 카메라 프레임 정지(절전·다른 앱) | 카메라 LED, 다른 앱 | 다른 앱 종료 후 '다시 시도' 또는 새로고침 |
 ```
 
 `.claude/skills/music-debugging/scripts/check-assets.sh`:
@@ -1829,8 +2323,9 @@ description: Hand Chord Wheel 증상별 진단 런북. 소리 안 남, 손 인�
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 cd "$ROOT" || exit 1
+size_of() { if [ -f "$1" ]; then wc -c < "$1" | tr -d ' '; else echo 0; fi; }
 m=public/models/hand_landmarker.task
-if [ -f "$m" ] && [ "$(stat -f%z "$m")" = "7819105" ]; then echo "PASS: 모델 7819105 bytes"; else echo "FAIL: 모델 없음/크기 불일치 → npm run setup"; fi
+if [ "$(size_of "$m")" = "7819105" ]; then echo "PASS: 모델 7819105 bytes"; else echo "FAIL: 모델 없음/크기 불일치 → npm run setup"; fi
 n=$(ls public/wasm 2>/dev/null | wc -l | tr -d ' ')
 [ "$n" -ge 6 ] && echo "PASS: wasm ${n}개" || echo "FAIL: wasm ${n}개 → npm run setup"
 echo "node: $(node -v)"
@@ -1868,8 +2363,8 @@ Run: `npm run dev` → Chrome에서 `http://127.0.0.1:5173/?debug=1` → Start.
 - [ ] **Step 2: handedness 확인**
 
 오른손만 들고 좌하단 라벨을 읽는다.
-- `Right:0.9x`면 그대로(`swapHandedness: false`).
-- `Left:0.9x`로 나오고 손 점이 안 찍히면(오른손이 무시됨) `src/config.ts`의 `swapHandedness`를 `true`로 바꾸고 새로고침해 손 점이 찍히는지 확인한다.
+- `Right:0.9x`이고 파란 손바닥 점이 찍히면 그대로(`swapHandedness: false`).
+- `Left:0.9x`로 나오고 회색 점만 찍히면(오른손이 무시됨) 화면의 '좌우 바꾸기'를 켜서 파란 점이 찍히는지 확인하고, `src/config.ts`의 `swapHandedness` 기본값을 `true`로 바꾼다(체크박스 저장값과 무관하게 새 사용자 기본값).
 결과를 README "실측 기록"에 적는다(날짜, 라벨, 결정).
 
 - [ ] **Step 3: 펼침 보정값 측정**
@@ -1877,13 +2372,14 @@ Run: `npm run dev` → Chrome에서 `http://127.0.0.1:5173/?debug=1` → Start.
 손을 휠 중심에서 바깥쪽에 두고(쉼 원판 밖), 다음을 각 3초씩 유지하며 `ratio` 값을 읽는다:
 1. 완전히 편 손 → 최소값을 `openMeasured`로 기록(예: 1.62)
 2. 꽉 쥔 주먹 → 최대값을 `closedMeasured`로 기록(예: 0.91)
-3. 카메라에서 1 m 떨어져 반복 → 값이 ±0.1 안에서 같은지 확인(정규화 검증)
+3. 손을 옆으로 눕힌 자세로 1·2를 반복 → 값이 ±0.1 안에서 같은지 확인(픽셀 좌표 계산 검증)
+4. 카메라에서 1 m 떨어져 반복 → 값이 ±0.1 안에서 같은지 확인(크기 정규화 검증)
 
 `src/config.ts`에 반영: `closedRatio = closedMeasured + 0.05`, `openRatio = openMeasured - 0.05` (여유 0.05씩 안쪽으로). 예: 0.96, 1.57.
 
 - [ ] **Step 4: 재확인**
 
-새로고침 후: 편 손 → 95% 이상, 주먹 → 0%, 반쯤 편 손 → 40~70% 사이에서 부드럽게 움직이고 소리 음량이 따라간다. 주먹에서 100 ms 안에 무음.
+새로고침 후: 편 손 → 95% 이상, 주먹 → 0%, 반쯤 편 손 → 40~70% 사이에서 부드럽게 움직이고 소리 음량이 따라간다. 주먹에서 100 ms 안에 무음, 20%를 넘기면 다시 소리.
 
 - [ ] **Step 5: 전체 검증과 Commit**
 
@@ -1912,7 +2408,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 웹캠으로 **오른손**을 추적해 화면 위 코드 휠에서 코드를 고르고, 손을 편 정도로 음량을 조절하는 로컬 악기입니다. 영상은 브라우저 밖으로 나가지 않습니다(서버 없음).
 
 ## 요구 사항
-- macOS + Chrome (Web MIDI 2차 기능을 위해 Chrome 권장. Safari는 Web MIDI 미지원)
+- Chrome (macOS에서 개발·테스트. Safari는 테스트되지 않았고, 2차의 Web MIDI 기능은 Safari 미지원)
 - Node 22.12 이상 (개발 환경 25.8.1에서 확인)
 - 웹캠
 
@@ -1922,23 +2418,26 @@ npm install
 npm run setup   # 손 추적 모델(7.8 MB) 내려받기 + MediaPipe wasm(34 MB) 복사. 1회
 npm run dev     # http://127.0.0.1:5173 를 Chrome에서 열기
 ```
-카메라 권한은 `localhost`/`127.0.0.1`에서만 열립니다. HTML 파일을 직접 열면 동작하지 않습니다.
+카메라 권한은 `localhost`/`127.0.0.1`(또는 https)에서만 열립니다. HTML 파일을 직접 열거나 LAN 주소로 열면 화면에 안내가 뜹니다.
 
 ## 사용법
-- **Start**: 소리와 카메라를 켭니다(브라우저 정책상 클릭이 필요).
+- **Start**: 파일 확인 → 소리 → 손 추적 모델 → 카메라 순서로 켭니다(브라우저 정책상 클릭이 필요).
 - **오른손 위치**: 휠 중심에서 손이 있는 방향의 칸이 선택됩니다. 12시 칸이 0번.
-- **손 펼침(R OPEN)**: 음량. 15% 미만(주먹)이면 무음.
+- **손 펼침(R OPEN)**: 음량. 15% 미만(주먹)이면 무음, 20% 이상으로 펴면 다시 소리.
 - **휠 중앙 원판**: 손을 넣으면 쉼(무음).
-- **Reset**: 소리와 상태 초기화.
-- **팔레트**: 하단 글상자에 코드 이름을 공백으로 구분해 입력(6~16개). 예: `B Em6 A9 D#7 G#m A B7 Emaj7 E6 G F#7sus4 C#m7`. 브라우저에 저장됩니다.
-- `?debug=1`을 붙이면 좌하단에 펼침 비율과 손 라벨이 표시됩니다.
+- **Reset**: 소리와 상태 초기화. 손을 내렸다 올리거나 중앙 원판을 지나면 다시 소리가 납니다.
+- **좌우 바꾸기**: 카메라·조명에 따라 손 라벨이 반대로 나올 때 켭니다(브라우저에 저장).
+- **팔레트**: 하단 글상자에 코드 이름을 공백으로 구분해 입력(6~16개). 예: `B Em6 A9 D#7 G#m A B7 Emaj7 E6 G F#7sus4 C#m7`. 소문자(`em6`)는 표준 표기(`Em6`)로 바뀌어 저장됩니다.
+- 다른 사람의 손은 회색 점으로 표시되며, 오른손이 둘이면 직전 위치에 가까운 손을 따라갑니다.
+- `?debug=1`을 붙이면 좌하단에 펼침 비율·손 라벨·상태가 표시됩니다.
 
 ## 구조
-- `src/mapping.ts` 각도→칸, 펼침%, 데드존, 지수 이동 평균, 유지 규칙 (순수 함수, 테스트 있음)
-- `src/chords.ts` 코드 이름→MIDI 번호 (tonal 6.4.3)
+- `src/mapping.ts` 각도→칸, 펼침%, 데드존·히스테리시스, 지수 이동 평균, 유지 규칙 (순수 함수, 테스트 있음)
+- `src/chords.ts` 코드 이름→MIDI 번호, 팔레트 파싱 (tonal 6.4.3)
+- `src/hands.ts` MediaPipe 결과에서 오른손 고르기 (순수 함수, 테스트 있음)
 - `src/tracker.ts` MediaPipe Hand Landmarker 1.0.1 (GPU, 실패 시 CPU)
 - `src/audio.ts` Tone.js 15 PolySynth. `ChordOutput` 인터페이스 뒤에 있어 2차에 MIDI 출력을 추가할 수 있음
-- `src/overlay.ts` Canvas 그리기, `src/main.ts` 상태 전이
+- `src/camera.ts`, `src/overlay.ts`, `src/main.ts` 카메라 / Canvas 그리기 / 상태 전이
 
 ## 검증
 ```bash
@@ -1949,7 +2448,7 @@ npm run verify   # 타입 검사 + 단위 테스트 + 자산 확인 + 시크릿 
 - (Task 11에서 기록: 날짜, handedness 라벨 결과, closed/open 측정값)
 
 ## 2차 계획
-- Web MIDI → IAC Driver → GarageBand/Logic Pro 출력
+- Web MIDI → IAC Driver → GarageBand/Logic Pro 출력 (Chrome 전용)
 - 왼손 기능, One Euro Filter, 녹음
 
 ## 참고한 공개 프로젝트
@@ -1960,14 +2459,17 @@ npm run verify   # 타입 검사 + 단위 테스트 + 자산 확인 + 시크릿 
 MIT
 ```
 
-- [ ] **Step 2: 수동 합격 기준 5개 수행**
+- [ ] **Step 2: 수동 합격 기준 수행**
 
 `npm run dev` 상태에서:
 1. 좌하단 fps 25 이상
 2. 칸 경계(예: Em6/A9 사이)에 손을 5초 → 코드 불변
-3. 주먹 → 100 ms 안에 무음
-4. Reset → 즉시 무음, HUD `-`
+3. 주먹 → 100 ms 안에 무음; 20% 넘게 펴면 다시 소리; 15~20% 사이에서 따다닥 재어택 없음
+4. Reset(손을 휠 위에 둔 채) → 즉시 무음, 손을 내렸다 올리기 전까지 무음 유지
 5. 손을 화면 밖으로 → 0.5초 뒤 무음, HUD `-`
+6. 연주 중 다른 앱(FaceTime 등)으로 카메라를 가져가기 → 0.5초 안에 무음, '다시 시도' 안내 → 다른 앱 종료 후 '다시 시도'로 복구(카메라 LED가 재시도 사이에 꺼짐)
+7. 12칸을 2초 안에 한 바퀴 훑기 → 콘솔에 "Max polyphony exceeded" 없음
+8. 잘못된 팔레트("B Em6 Hxx A9 D#7 Zq") 입력 → 빨간 테두리 + 안내 4초, 입력창을 떠나면 원래 팔레트로 되돌아감
 실패 항목은 symptom-map.md를 따라 원인을 찾고 고친 뒤 재수행.
 
 - [ ] **Step 3: 전체 검증과 Commit**
@@ -1984,18 +2486,20 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 4: GitHub 올리기 (사용자 확인 후)**
 
-사용자에게 저장소 이름(기본 제안 `hand-chord-wheel`)과 공개 여부를 확인한 뒤:
+사용자에게 저장소 이름(기본 제안 `hand-chord-wheel`)과 공개 여부, LICENSE 저작권자 표기를 확인한 뒤:
 
 ```bash
+git ls-files | grep -E "^public/(models|wasm)/" && echo "FAIL: 대용량 자산이 추적됨" || echo "PASS: 대용량 자산 미추적"
 gh repo create hand-chord-wheel --public --source=. --remote=origin --push --description "Webcam hand-tracking chord wheel instrument (MediaPipe + Tone.js), local-only"
 ```
 
-Expected: 저장소 URL 출력, `main` 푸시 완료. 푸시 전에 `git ls-files | grep -E "^public/(models|wasm)/"` 가 비어 있는지 확인(대용량 자산 미추적).
+Expected: 저장소 URL 출력, `main` 푸시 완료.
 
 ---
 
-## Self-Review (작성자 점검 기록)
+## Self-Review (작성자 점검 기록, 2판)
 
-- **Spec coverage:** 1장 범위(Task 9), 2장 파일 구조·의존성·저장소 규칙(Task 1·12), 3-1 루프·GPU/CPU(Task 7·9), 3-2 각도(Task 3), 3-3 데드존·유예(Task 3·9), 3-4 펼침(Task 3·11), 3-5 음량·트리거(Task 5·9), 3-6 EMA(Task 3), 3-7 코드→MIDI(Task 4), 3-8 팔레트(Task 4·9), 3-9 출력 인터페이스(Task 5), 3-10 화면(Task 8·9), 4장 상태 전이(Task 9), 5장 오류(Task 9 describeError·notice), 6장 테스트(Task 3·4·7·8·12), QA 인프라(Task 10). 누락 없음.
+- **Spec coverage:** 1장 범위(Task 9), 2장 파일 구조·의존성·저장소 규칙(Task 1·12), 3-1 루프·GPU/CPU(Task 7·9), 3-2 각도(Task 3), 3-3 데드존·유예·쉼/무음 히스테리시스(Task 3·9), 3-4 펼침(픽셀 좌표, Task 3·9·11), 3-5 음량·트리거(Task 5·9), 3-6 EMA·재등장 초기화(Task 3·9), 3-7 코드→MIDI(Task 4), 3-8 팔레트·정규화(Task 4·9), 3-9 출력 인터페이스·상태 감시(Task 5), 3-10 화면·Reset 대기·좌우 바꾸기(Task 8·9), 4장 상태 전이·워치독·카메라 종료(Task 9), 5장 오류(Task 6·9: assertCameraSupported, checkAssets, withTimeout, enterError), 6장 테스트(Task 3·4·7·8·12), 8장 실패 분석 반영(전 Task), QA 인프라(Task 10).
+- **실패 분석 반영 확인:** CRITICAL ① 루프 try/catch+연속 오류 → ERROR(Task 9 loop) ② 워치독+트랙 ended(Task 6·9) ③ maxPolyphony 32(Task 2). GAP: 시작 실패 정리·순서(assets→audio→model→camera, Task 9), 타임아웃(Task 2·9), 자산 HEAD 사전 확인(Task 9), 오디오 상태 감시·재개(Task 5·9), `wc -c`(Task 1·10), 픽셀 좌표 펼침(Task 9), 재등장 필터 초기화(Task 3·9), 쉼/무음 히스테리시스(Task 3·9), 두 오른손 연속성·점수·화면 안(Task 7), 다른 손만 보일 때 안내+좌우 바꾸기 체크박스(Task 9), 팔레트 거부 복원(Task 9), 비보안/미지원 환경 안내(Task 6·9), Reset 대기(Task 9), 표기 정규화(Task 4), 포커스 복귀(Task 9 enterError), 16:9 프레임(Task 9), visibility 필드(Task 7 테스트), hands.ts 분리(Task 7), 빈 MIDI 방어(Task 9), roundRect 폴백(Task 8).
 - **Placeholder scan:** TBD/TODO 없음. README "실측 기록" 빈 줄은 Task 11에서 채우는 의도된 입력란.
-- **Type consistency:** `ChordOutput.play(midi: readonly number[])` ↔ `midiByIndex: number[][]` 전달 OK. `HandView{palm,tips}` ↔ main.ts `handView` OK. `nextSector(prev, deg, n, deadZoneDeg)` 호출 인자 순서 일치. `HandTracker.lastLabels`·`delegate`를 main.ts에서 사용 — 정의됨. `Scene.notice/debug/muted` 모두 drawScene에서 소비.
+- **Type consistency:** `ChordOutput.play(midi: readonly number[])` ↔ `midiByIndex: number[][]`. `HandTracker.detect(video, now, {swap, prevPalm})` → `HandSelection{chosen, otherPalms, labels}` ↔ main.ts 사용. `ChosenHand.palm`(정규화) ↔ `prevPalmNorm`. `wheelGeometry().restExitR` ↔ `Hysteresis(restExitR, restR)`. `HoldTracker.lastSeenMs` ↔ main.ts `prevSeen`. `Scene.otherPalms` ↔ drawScene. `openCamera(video, onEnded)` ↔ main.ts `onCameraEnded`. `assertCameraSupported` 부팅·시작 양쪽에서 호출. `State`에 `STARTING` 추가 — loop/draw의 `active` 판정은 READY/PLAYING만 사용.
