@@ -58,7 +58,7 @@ music/
 | tonal | 6.4.3 고정 | Chord.notes(symbol, tonic+octave), Note.midi. 6.5.0은 Node ESM import가 깨짐(@tonaljs/abc-notation main 경로 누락) |
 | vite | 8.3.3 | 개발 서버 |
 | vitest | 5.0.3 | 단위 테스트 |
-| typescript | 계획 단계에서 5.9 계열 또는 7.0.2 중 Vite/Vitest 호환 확인 후 고정 | 타입 검사 |
+| typescript | 5.9.3 고정 (7.0.2는 네이티브 신판이라 1차에서는 보류; tsc는 타입 검사 전용) | 타입 검사 |
 
 ### GitHub 공개를 위한 저장소 규칙
 - `public/models/`, `public/wasm/`, `node_modules/`는 커밋하지 않는다. `npm run setup`이 모델을 공식 URL에서 내려받고(바이트 수 7,819,105 검증) wasm을 `node_modules/@mediapipe/tasks-vision/wasm`에서 복사한다.
