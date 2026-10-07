@@ -17,6 +17,7 @@ case "$REL" in
   src/audio.ts|src/output.ts) echo "[impact] 소리 출력 → ChordOutput 인터페이스 변경 시 2차 midiOut.ts 호환 확인, 코드 전환 시 release→attack, maxPolyphony 32 유지, 절전 복귀 재개" ;;
   src/tracker.ts) echo "[impact] 손 추적 → GPU→CPU 폴백 확인, 타임스탬프 단조 증가" ;;
   src/camera.ts) echo "[impact] 카메라 → 재시도 시 이전 스트림 정리, 트랙 ended 콜백, 비보안 컨텍스트 메시지" ;;
+  src/midi.ts|src/midi-messages.ts) echo "[impact] MIDI 출력 → tests/midi-messages.test.ts 실행, 가짜 MIDI 브라우저 확인(전환·Reset 패닉·복원·끊김 복귀), GarageBand 실측(걸린 음 없는지)" ;;
   src/config.ts) echo "[impact] 상수 → 보정값(closed/open)·데드존·유예·타임아웃 변경 시 수동 합격 기준 재수행" ;;
   src/main.ts) echo "[impact] 상태 전이 → 수동 합격 기준 전부 재수행(fps≥25, 경계 5초 불변, 주먹 100ms 무음, Reset, 손 이탈 0.5초, 카메라 뺏김 0.5초, 12칸 훑기 Note dropped 없음)" ;;
   src/overlay.ts|index.html) echo "[impact] 화면 → 거울 좌표(x→1-x) 일치, HUD 글자 반전 여부, 프레임 비율, tests/overlay.test.ts" ;;

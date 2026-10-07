@@ -48,3 +48,23 @@
    **원인** MediaStream을 재생하는 video의 currentTime은 연속으로 증가해 rAF 틱마다 '새 프레임'으로 보임
    **규칙** 카메라 프레임 처리는 video.requestVideoFrameCallback으로 건다(없을 때만 currentTime 비교로 대체)
    **적용 시점** main.ts 프레임 루프 수정 때
+
+10. **증상** MIDI 전송 실패로 신디 복귀 직후 손이 같은 칸에 있는데 무음
+    **원인** fail()→onFatal→switchToTone이 play() 도중 동기로 돌아 processFrame이 '음 없는 PLAYING'을 만듦
+    **규칙** 출력 전환 콜백은 queueMicrotask로 미루고, processFrame은 play 뒤 출력 객체가 바뀌었으면 상태를 덮어쓰지 않는다
+    **적용 시점** midi.ts fail()/main.ts processFrame 수정 때
+
+11. **증상** 같은 포트를 감싼 MidiOutput이 둘 생기면 끊김 감지가 사라짐
+    **원인** port.onstatechange 단일 슬롯을 대입·null로 덮어씀
+    **규칙** 포트 이벤트는 addEventListener/removeEventListener로 인스턴스별 등록, 등록은 open() 성공 뒤
+    **적용 시점** midi.ts 수정 때
+
+12. **증상** MIDI 권한을 거부하면 출력 상자가 'MIDI 장치 찾기…'에 멈춰 재시도가 안 됨
+    **원인** 상자 재구성 생략(내용 같으면 return)이 선택값(DOM value) 복원까지 건너뜀. 같은 option 재선택은 change 이벤트를 내지 않음
+    **규칙** 재구성은 생략해도 `outputSelect.value`는 항상 목표값으로 맞춘다
+    **적용 시점** main.ts renderOutputOptions 수정 때
+
+13. **증상** 권한 창을 기다리는 동안 사용자가 다른 출력을 골랐는데 허용 뒤 자동 선택이 덮어씀 / 장애 복귀가 진행 중인 전환을 취소함
+    **원인** 비동기 대기 전후로 세대 번호(switchSeq)·진행 중 목표(switchingTo)를 비교하지 않음
+    **규칙** await 전에 seq를 잡고 뒤에 비교. 장애 복귀는 switchingTo가 있으면 현재 출력만 떼고 세대는 올리지 않는다
+    **적용 시점** main.ts requestMidiAndPick/restoreOutputPref/onMidiFailed 수정 때
