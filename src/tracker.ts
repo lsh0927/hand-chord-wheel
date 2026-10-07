@@ -63,3 +63,6 @@ export class HandTracker {
     this.landmarker = null;
   }
 }
+
+/** 손 관절 연결(손목→손가락 뼈). 오버레이의 유령 손 선분에 쓴다 */
+export const HAND_CONNECTIONS: ReadonlyArray<{ start: number; end: number }> = HandLandmarker.HAND_CONNECTIONS;
