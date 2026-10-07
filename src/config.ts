@@ -1,7 +1,12 @@
 // 모든 조정 가능한 상수. 숫자 근거는 설계 문서 3장·8장.
 export const CONFIG = {
   wheel: {
-    outerRadiusRatio: 0.375, // 영상 높이 대비 바깥 반지름
+    outerRadiusRatio: 0.375, // 가운데 배치일 때 영상 높이 대비 바깥 반지름
+    cornerRadiusRatio: 0.3, // 구석 배치일 때(얼굴을 가리지 않게 조금 작게)
+    cornerSideMargin: 0.04, // 구석 배치: 좌우 여백(영상 너비 비율)
+    cornerBottomLine: 0.85, // 구석 배치: 휠 바닥이 닿는 선(영상 높이 비율). 아래는 팔레트·버튼 바
+    defaultAnchor: "bottom-right", // "center" | "bottom-left" | "bottom-right"
+    anchorStorageKey: "hcw.wheel.v1",
     restRadiusRatio: 0.07, // 중앙 쉼 원판(진입 기준)
     restExitFactor: 1.3, // 쉼 원판 이탈은 반지름 × 1.3 밖으로 나가야 함 (히스테리시스)
     labelRadiusRatio: 0.8, // 바깥 반지름 대비 글자 위치
