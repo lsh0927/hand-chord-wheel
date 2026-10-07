@@ -56,5 +56,12 @@ export const CONFIG = {
     max: 16,
     storageKey: "hcw.palette.v1",
   },
+  midi: {
+    channel: 1, // 1~16
+    velocity: 100,
+    ccExpression: 11, // 손 펼침 → CC11 익스프레션
+    storageKey: "hcw.output.v2", // JSON: {"kind":"tone"} | {"kind":"midi","id":"…","name":"…"}
+    maxSendErrors: 5, // '연속' 전송 실패 시 브라우저 신디로 복귀 (성공하면 0으로)
+  },
   fps: { warnBelow: 15 },
 } as const;
