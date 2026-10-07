@@ -31,6 +31,7 @@ export function wheelGeometry(width: number, height: number, anchor: WheelAnchor
 export interface HandView {
   palm: Point;
   tips: Point[];
+  all: Point[]; // 21점(거울 변환 좌표) — 유령 손 선분용
 }
 
 export interface Scene {
@@ -40,6 +41,7 @@ export interface Scene {
   selected: number | null;
   hand: HandView | null;
   otherPalms: Point[]; // 선택되지 않은 손(회색 점)
+  connections: ReadonlyArray<{ start: number; end: number }>; // 손 관절 연결(유령 손)
   openPercent: number;
   level: number;
   muted: boolean;
@@ -134,6 +136,27 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
 
   // 선택된 손: 손끝 5개와 손바닥 중심
   if (s.hand) {
+    // 유령 손: 관절 연결선 + 관절 점(반투명). 아바타 모드에서 손 위치를 알려 준다
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    for (const c of s.connections) {
+      const a = s.hand.all[c.start];
+      const b = s.hand.all[c.end];
+      if (!a || !b) continue;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    for (const p of s.hand.all) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     for (const t of s.hand.tips) {
       ctx.beginPath();

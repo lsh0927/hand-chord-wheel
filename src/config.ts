@@ -104,6 +104,7 @@ export const CONFIG = {
     maxDeltaSec: 0.1, // 탭 숨김·영상 모드에서 돌아올 때 스프링본 폭발 방지
     maxErrors: 10, // 렌더 예외 연속 10회면 아바타 표시만 끈다
     camera: { fov: 30, y: 1.35, z: 1.7 },
+    armDownDeg: 70, // VRM 기본 T자 자세의 팔을 몸 옆으로 내리는 각도(2단계에서 손 추적으로 대체)
     camViewStorageKey: "hcw.camview.v1",
     defaultCamView: "avatar", // "avatar" | "avatar-nopip" | "video"
   },
