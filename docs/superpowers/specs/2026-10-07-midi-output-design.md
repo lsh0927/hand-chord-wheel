@@ -47,17 +47,17 @@
 ### 3-3. 출력 선택과 전환
 - 상자 항목: `tone`(브라우저 신디) / `midi-request`("MIDI 장치 찾기…", 아직 권한 전) / `midi:<포트 id>`(권한 후 연결된 포트마다). Web MIDI 미지원 브라우저면 비활성 항목 "MIDI 미지원(Chrome 필요)" 하나만.
 - `midi-request` 선택 → `navigator.requestMIDIAccess({ sysex: false })` → 성공 시 포트 목록으로 상자를 채운다. 연결된 포트가 정확히 하나면 자동 선택, 여럿이면 상자를 열어 두고 안내, 없으면 안내(IAC 드라이버 켜는 법)와 함께 `tone` 유지.
-- 포트 선택 → 포트 `open()` → 현재 출력 `stop()`(MIDI였으면 패닉 포함 `dispose()`) → 출력 객체 교체 → 상단 알림 "MIDI 출력: <이름>" → localStorage `hcw.output.v1`에 `midi:<포트 이름>` 저장. 연주 중이었다면 다음 프레임에 새 출력으로 자동 재생된다(현재 칸이 비워지므로).
-- `tone` 선택 → MIDI 출력이면 `dispose()`(패닉) → Tone 출력으로 교체 → 저장 `tone`.
-- 부팅 시 저장값이 `midi:<이름>`이면 권한을 요청해(이전에 허용했으면 창 없이 통과) 같은 이름의 연결된 포트를 찾아 자동 선택. 못 찾으면 `tone` + 안내.
-- MIDIAccess `statechange`(포트 추가·제거) → 상자 목록을 다시 채운다(현재 선택이 남아 있으면 유지).
+- 포트 선택 → 포트 `open()` → 연결 상태 재확인 → 현재 출력 `stop()`(MIDI였으면 패닉 포함 `dispose()`) → 출력 객체 교체 → 상단 알림 "MIDI 출력: <이름> — GarageBand에서 소프트웨어 악기 트랙을 선택해 두세요" → localStorage `hcw.output.v2`에 `{"kind":"midi","id":…,"name":…}` 저장. 연주 중이었다면 다음 프레임에 새 출력으로 자동 재생된다(현재 칸이 비워지므로). 같은 포트 재선택은 무시하고, 전환마다 세대 번호를 올려 늦게 끝난 전환은 버린다.
+- `tone` 선택 → MIDI 출력이면 `dispose()`(패닉) → Tone 출력으로 교체 → 저장 `{"kind":"tone"}`. 장애로 인한 자동 복귀는 저장값을 바꾸지 않는다(다음 실행 때 다시 MIDI 시도).
+- 부팅 시 저장값이 MIDI면 권한을 요청해(이전에 허용했으면 창 없이 통과) id로 찾고, 없으면 같은 이름이 정확히 하나일 때만 자동 선택. 못 찾으면 `tone` + 안내. 권한 요청은 진행 중 Promise를 공유해 사용자가 동시에 '찾기…'를 골라도 한 번만 실행된다.
+- MIDIAccess `statechange`(포트 추가·제거·열림) → 상자 목록을 다시 계산하되 내용이 같으면 재구성하지 않는다(열어 둔 드롭다운이 닫히지 않게). 전환 진행 중에는 상자가 목표 포트를 가리킨다.
 
 ### 3-4. 안전장치 (걸린 음 방지)
 패닉을 보내는 시점: 출력 전환, Reset, 오류 진입(`enterError`), `pagehide`, `visibilitychange` hidden, 포트 연결 끊김 감지 직전(가능하면), 전송 반복 실패로 신디 복귀 직전.
 
 ### 3-5. 연결 끊김·전송 실패
-- 선택한 포트의 `onstatechange`에서 `state === "disconnected"`면 즉시 Tone 출력으로 복귀하고 "MIDI 장치 연결이 끊어졌습니다 → 브라우저 신디로 전환" 알림. 상자는 `tone`으로 되돌린다. 재진입 가드(복귀 처리 중 다시 호출되지 않게).
-- `send()` 예외는 1회면 경고 로그만, 연속 5회면 위와 같이 신디로 복귀.
+- 선택한 포트의 `statechange`(인스턴스별 `addEventListener`, 포트를 연 뒤 등록)에서 `state === "disconnected"`면 패닉을 시도한 뒤 **마이크로태스크로** Tone 출력 복귀를 예약한다(play() 도중 동기로 전환하면 호출자가 '음 없는 PLAYING'을 만들기 때문). 알림 "MIDI 장치 연결이 끊어졌습니다 → 브라우저 신디로 전환", 상자는 `tone`. 현재 출력이 아닌 인스턴스의 실패는 무시한다.
+- `send()` 예외는 1회면 경고 로그만, **연속** 5회면 위와 같이 신디로 복귀(성공하면 카운터 0). processFrame은 play() 뒤 출력 객체가 바뀌었으면 상태를 덮어쓰지 않는다.
 
 ## 4. 화면
 - 하단 바: `[팔레트 입력] [출력 ▾] [좌우 바꾸기] [Start]`. 출력 상자는 버튼과 같은 어두운 스타일.
@@ -67,7 +67,7 @@
 
 | 상황 | 감지 | 처리 |
 |---|---|---|
-| Web MIDI 미지원(Safari 등) | `typeof navigator.requestMIDIAccess !== "function"` | 상자에 비활성 안내 항목, 신디 유지 |
+| Web MIDI 미지원(Safari 등) / 비보안 주소 | `typeof navigator.requestMIDIAccess !== "function"`, `window.isSecureContext` | 상자에 비활성 안내 항목("Chrome 필요" 또는 "localhost로 여세요"), 신디 유지 |
 | 권한 거부 | requestMIDIAccess reject(SecurityError 등) | 알림 "MIDI 권한이 거부되었습니다. 주소창 아이콘에서 허용 후 다시 선택", 상자 `tone` |
 | 포트 없음 | outputs 비어 있음 | 알림 "MIDI 출력 포트가 없습니다. Audio MIDI 설정 → MIDI 스튜디오 → IAC 드라이버 → '장치가 온라인 상태' 체크", README 링크 |
 | 포트 open 실패 | open() reject | 알림 + `tone` 유지 |
@@ -87,3 +87,17 @@
 2. GarageBand → 새 프로젝트 → 소프트웨어 악기 트랙 → 악기 선택(권장: 스트링/패드, 또는 신스 + Smart Controls의 아르페지에이터). GarageBand는 연결된 모든 MIDI 입력을 **선택된 트랙** 하나로 받는다.
 3. 웹앱 출력 상자에서 "MIDI 장치 찾기…" → 허용 → IAC 버스 선택.
 4. 소리가 안 나면: GarageBand 트랙이 선택되어 있는지, 트랙 헤더의 MIDI 입력 표시등이 깜빡이는지, IAC가 온라인인지, Chrome 주소창 MIDI 권한 상태.
+
+## 8. 실패 분석 반영 (2026-10-07, `2026-10-07-midi-failure-analysis.md`)
+
+| 구분 | 내용 | 반영 |
+|---|---|---|
+| CRITICAL | 전송 실패/끊김으로 fail()→switchToTone이 play() 도중 동기 재진입 → 음 없는 PLAYING(무음 고착) | onFatal을 queueMicrotask로 지연 + processFrame play 뒤 출력 교체 가드 |
+| GAP | open() 중 끊김 → disposed 인스턴스가 현재 출력이 됨 | start() 뒤 isRunning 확인, 현재 출력 아닌 인스턴스의 실패 무시 |
+| GAP | 권한 요청 중복(부팅 복원 × 사용자 선택), onstatechange 단일 슬롯 덮어쓰기 | request() in-flight 공유, addEventListener 인스턴스별 리스너(열린 뒤 등록), 같은 포트 재선택 가드, 전환 세대 번호 |
+| GAP | sendErrors가 누적만 되어 산발 실패 5회에 돌발 전환 | 성공 시 0 |
+| GAP | 선호가 이름만 저장(중복·로케일) · 장애 복귀가 선호를 덮어씀 | id+이름 JSON(v2 키), 복귀는 persist=false |
+| GAP | Start 성공 검사·Tone 상태 콜백이 다형 output을 봄 | toneOutput 기준 + output === toneOutput 가드 |
+| NOTE | 상자 재구성으로 드롭다운 닫힘, 전환 중 값 깜빡임 | 내용 같으면 생략, switchingTo 우선 |
+| NOTE | 비보안 주소 안내, 성공 알림의 GarageBand 힌트, open 실패 문구 접두어 | 반영 |
+| NOTE | Chrome 런타임 동작 미확인(끊긴 포트 send 예외, 제스처 없는 복원 요청, 탭 종료 시 패닉 전달) | Task 5 실측 항목 + gotchas 기록 |
