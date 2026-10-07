@@ -32,6 +32,13 @@ else
   echo "WARN: wasm 자산 없음/크기 불일치 — npm run setup"
 fi
 
+# 얼굴 모델은 선택 자산(아바타 표정) — 없어도 FAIL이 아니다
+if [ "$(size_of public/models/face_landmarker.task)" = "3758596" ]; then
+  echo "PASS: 얼굴 모델 자산 (3758596 bytes)"
+else
+  echo "WARN: 얼굴 모델 없음 — npm run setup (아바타 표정만 꺼짐)"
+fi
+
 if grep -rnE "(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY)" src scripts index.html 2>/dev/null; then
   echo "FAIL: 시크릿으로 보이는 문자열"; fail=1
 else
@@ -42,8 +49,8 @@ if grep -q '"tonal": "6.4.3"' package.json; then echo "PASS: tonal 6.4.3 고정"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "WARN: git 저장소가 아니라 자산 추적 검사 생략"
-elif [ -n "$(git ls-files public/models public/wasm)" ]; then
-  echo "FAIL: 대용량 자산이 git에 추적됨"; git ls-files public/models public/wasm | head -5; fail=1
+elif [ -n "$(git ls-files public/models public/wasm public/avatar.vrm)" ]; then
+  echo "FAIL: 대용량 자산이 git에 추적됨"; git ls-files public/models public/wasm public/avatar.vrm | head -5; fail=1
 else
   echo "PASS: 대용량 자산 미추적"
 fi

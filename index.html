@@ -18,12 +18,22 @@
       .btn:disabled { opacity: 0.5; cursor: default; }
       .btn:focus-visible { outline: 2px solid var(--accent); }
       .sel { border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 600 13px system-ui; padding: 8px 10px; border-radius: 8px; max-width: 260px; }
-      #reset { position: absolute; z-index: 2; top: 16px; right: 16px; }
-      #bottom { position: absolute; z-index: 2; left: 16px; right: 56px; bottom: 44px; display: flex; gap: 8px; align-items: center; }
+      #avatar { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+      #overlay { z-index: 3; } /* 미리보기(2) 위 — 유령 손·HUD가 항상 보인다 */
+      #topbar { position: absolute; z-index: 4; top: 16px; right: 16px; display: flex; gap: 8px; }
+      #avatar-msg { position: absolute; z-index: 4; top: 64px; left: 50%; transform: translateX(-50%); max-width: 70%; font: 500 13px system-ui; color: #cfd8ff; background: rgba(0,0,0,0.45); padding: 4px 10px; border-radius: 6px; text-align: center; }
+      #avatar-msg:empty { display: none; }
+      #frame[data-camview^="avatar"] { background: radial-gradient(ellipse at 50% 35%, #27304a 0%, #0b0c10 70%); }
+      #frame[data-camview^="avatar"] #video { opacity: 0; } /* 숨겨도 디코딩·프레임 콜백은 유지(2026-10-07 측정 30/s) */
+      #frame[data-camview="avatar"][data-live="1"] #video { opacity: 1; inset: auto; width: 22%; height: auto; aspect-ratio: 16 / 9; bottom: 96px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); z-index: 2; }
+      #frame[data-camview="avatar"][data-pip="left"] #video { left: 16px; }
+      #frame[data-camview="avatar"][data-pip="right"] #video { right: calc(100% * 48 / var(--cvw, 1280)); } /* 영상 픽셀 48 = 음량 막대(W−28) 회피, 축척 무관 */
+      #frame[data-camview="video"] #avatar { display: none; }
+      #bottom { position: absolute; z-index: 4; left: 16px; right: 56px; bottom: 44px; display: flex; gap: 8px; align-items: center; }
       #palette { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 500 14px ui-monospace, monospace; }
       #palette.invalid { border-color: #ff8a80; }
       #swap-label { display: flex; align-items: center; gap: 6px; font: 500 13px system-ui; white-space: nowrap; background: rgba(0,0,0,0.55); padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); }
-      #palette-msg { position: absolute; z-index: 2; left: 16px; bottom: 84px; font: 500 13px system-ui; color: #9fe3a1; }
+      #palette-msg { position: absolute; z-index: 4; left: 16px; bottom: 84px; font: 500 13px system-ui; color: #9fe3a1; }
       #palette-msg.error { color: #ff8a80; }
       #start { font-size: 15px; }
     </style>
@@ -32,11 +42,22 @@
     <div id="stage">
       <div id="frame">
         <video id="video" playsinline muted></video>
+        <canvas id="avatar"></canvas>
         <canvas id="overlay"></canvas>
-        <button id="reset" class="btn" type="button">Reset</button>
+        <div id="topbar">
+          <button id="vrmbtn" class="btn" type="button">VRM 불러오기</button>
+          <input id="vrmfile" type="file" accept=".vrm" hidden />
+          <button id="reset" class="btn" type="button">Reset</button>
+        </div>
+        <div id="avatar-msg" aria-live="polite"></div>
         <div id="palette-msg"></div>
         <div id="bottom">
           <input id="palette" type="text" spellcheck="false" autocomplete="off" aria-label="코드 팔레트" />
+          <select id="camview" class="sel" aria-label="영상 표시">
+            <option value="avatar">아바타 + 미리보기</option>
+            <option value="avatar-nopip">아바타만</option>
+            <option value="video">카메라 영상</option>
+          </select>
           <select id="mode" class="sel" aria-label="선택 방식">
             <option value="fingers">선택: 손가락</option>
             <option value="wheel">선택: 휠</option>

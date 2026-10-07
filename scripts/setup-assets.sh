@@ -34,3 +34,18 @@ if [ "$count" -ge "$src_count" ] && [ "$count" -ge 6 ]; then
 else
   echo "FAIL: wasm ${count}개 (원본 ${src_count}개, 최소 6개)"; exit 1
 fi
+
+# 얼굴 모델(선택 기능: 아바타 표정). 실패해도 손 추적은 동작하므로 WARN으로 끝낸다
+FACE_URL="https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+FACE_BYTES=3758596
+FACE="$ROOT/public/models/face_landmarker.task"
+if [ "$(size_of "$FACE")" != "$FACE_BYTES" ]; then
+  echo "얼굴 모델 내려받는 중: $FACE_URL"
+  curl -fL --retry 3 -o "$FACE" "$FACE_URL" || echo "WARN: 얼굴 모델 다운로드 실패 — 아바타 표정 없이 동작합니다 (npm run setup 재실행으로 재시도)"
+fi
+if [ "$(size_of "$FACE")" = "$FACE_BYTES" ]; then
+  echo "PASS: 얼굴 모델 ($FACE_BYTES bytes)"
+else
+  echo "WARN: 얼굴 모델 크기 $(size_of "$FACE") != $FACE_BYTES — 받은 파일을 지웁니다. 손 추적·소리는 정상, 아바타 표정만 꺼집니다"
+  rm -f "$FACE"
+fi

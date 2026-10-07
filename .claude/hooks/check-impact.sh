@@ -16,7 +16,10 @@ case "$REL" in
   src/chords.ts) echo "[impact] chords.ts → 팔레트 파싱·표기 정규화·MIDI 번호. tests/chords.test.ts 실행, 12개 기본 코드 소리 확인" ;;
   src/hands.ts) echo "[impact] hands.ts → 오른손 선택(점수·화면 안·연속성). tests/hands.test.ts 실행, 두 손 동시 노출 수동 확인" ;;
   src/audio.ts|src/output.ts) echo "[impact] 소리 출력 → ChordOutput 인터페이스 변경 시 2차 midiOut.ts 호환 확인, 코드 전환 시 release→attack, maxPolyphony 32 유지, 절전 복귀 재개" ;;
-  src/tracker.ts) echo "[impact] 손 추적 → GPU→CPU 폴백 확인, 타임스탬프 단조 증가" ;;
+  src/tracker.ts) echo "[impact] 손 추적 → GPU→CPU 폴백 확인, 타임스탬프 단조 증가, HAND_CONNECTIONS(유령 손) 재export 유지" ;;
+  src/face.ts) echo "[impact] 얼굴 추적 → 선택 기능: 실패해도 Start·연주를 막지 않아야 함(startFaceInit/trackFace 격리), GPU→CPU 폴백, 타임스탬프 단조 증가" ;;
+  src/avatar-map.ts) echo "[impact] 표정·머리 매핑 → tests/avatar-map.test.ts 실행, 거울(mirror) 좌우·yaw·roll 반전, NaN 가드 유지" ;;
+  src/avatar.ts) echo "[impact] 아바타 장면 → 동적 import 전용(main.ts는 type import만), 세대 번호 loadSeq, dt 상한, VRM 0.x 부호 반전, 크기 0 가드. 샘플 VRM으로 로드 확인" ;;
   src/camera.ts) echo "[impact] 카메라 → 재시도 시 이전 스트림 정리, 트랙 ended 콜백, 비보안 컨텍스트 메시지" ;;
   src/midi.ts|src/midi-messages.ts) echo "[impact] MIDI 출력 → tests/midi-messages.test.ts 실행, 가짜 MIDI 브라우저 확인(전환·Reset 패닉·복원·끊김 복귀), GarageBand 실측(걸린 음 없는지)" ;;
   src/config.ts) echo "[impact] 상수 → 보정값(closed/open)·데드존·유예·타임아웃 변경 시 수동 합격 기준 재수행" ;;

@@ -1,6 +1,8 @@
 import { CONFIG } from "./config";
 import { assertCameraSupported, openCamera, stopCamera } from "./camera";
-import { HandTracker } from "./tracker";
+import { HandTracker, HAND_CONNECTIONS } from "./tracker";
+import { FaceTracker } from "./face";
+import type { AvatarView, AvatarInfo } from "./avatar"; // 타입만 — 정적 import면 three.js가 메인 번들에 묶인다
 import { ToneOutput } from "./audio";
 import type { ChordOutput } from "./output";
 import { MidiManager, MidiOutput, isWebMidiSupported } from "./midi";
@@ -37,6 +39,11 @@ const resetBtn = $<HTMLButtonElement>("reset");
 const paletteInput = $<HTMLInputElement>("palette");
 const paletteMsg = $<HTMLElement>("palette-msg");
 const swapInput = $<HTMLInputElement>("swap");
+const avatarCanvas = $<HTMLCanvasElement>("avatar");
+const avatarMsg = $<HTMLDivElement>("avatar-msg");
+const camViewSelect = $<HTMLSelectElement>("camview");
+const vrmInput = $<HTMLInputElement>("vrmfile");
+const vrmBtn = $<HTMLButtonElement>("vrmbtn");
 const ctx2d = canvas.getContext("2d");
 if (!ctx2d) throw new Error("Canvas 2D 컨텍스트를 만들 수 없습니다");
 const ctx: CanvasRenderingContext2D = ctx2d;
@@ -61,6 +68,29 @@ let switchingTo: string | null = null; // 전환 진행 중 상자에 보여 줄
 let lastOptionsKey = ""; // 상자 재구성 생략용
 const tracker = new HandTracker();
 const hold = new HoldTracker(CONFIG.hold.lostGraceMs);
+
+// ── 아바타·얼굴(선택 기능) ────────────────────────────────
+type CamView = "avatar" | "avatar-nopip" | "video";
+const CAM_VIEWS: readonly CamView[] = ["avatar", "avatar-nopip", "video"];
+let camView: CamView = CONFIG.avatar.defaultCamView;
+const faceTracker = new FaceTracker();
+const faceHold = new HoldTracker(CONFIG.face.lostGraceMs);
+let faceAvailable = false; // 얼굴 모델 파일이 서버에 있는가(선택 자산)
+let faceInitInFlight = false;
+let faceErrors = 0;
+let faceEvery = 1; // N프레임마다 얼굴 추적(CPU 폴백·저속이면 2)
+let frameCount = 0;
+let slowSince: number | null = null;
+let readyAt = 0;
+let faceHint: string | null = null;
+let faceDebug = ""; // ?debug=1: 행렬 평행이동 성분(열 우선 가정 검증용)
+let avatar: AvatarView | null = null;
+let avatarPromise: Promise<AvatarView> | null = null;
+let avatarLoads = 0;
+let avatarHint: string | null = null;
+let avatarDisabled = false;
+let avatarErrors = 0;
+let lastAvatarRender = 0;
 const emaX = new Ema(CONFIG.smoothing.alpha);
 const emaY = new Ema(CONFIG.smoothing.alpha);
 const emaRatio = new Ema(CONFIG.smoothing.alpha);
@@ -475,6 +505,7 @@ function isWheelAnchor(v: string): v is WheelAnchor {
 function applyWheelAnchor(a: WheelAnchor): void {
   wheelAnchor = a;
   wheelPosSelect.value = a;
+  frame.dataset.pip = a === "bottom-left" ? "right" : "left"; // 미리보기는 패널 반대편
   // 중심이 바뀌면 손의 각도도 바뀌므로 표시 칸을 비우고 다음 프레임에 새로 고른다
   shownSector = null;
   outsideRest?.reset();
@@ -527,7 +558,7 @@ swapInput.addEventListener("change", () => {
 function describeError(e: unknown): string {
   const name = e instanceof DOMException ? e.name : "";
   const text = e instanceof Error ? e.message : e instanceof Event ? `리소스 로드 실패 (${e.type})` : String(e);
-  for (const prefix of ["UNSUPPORTED: ", "ASSET_MISSING: ", "TIMEOUT: ", "AUDIO: ", "CANCELLED: ", "DENIED: ", "MIDI: "]) {
+  for (const prefix of ["UNSUPPORTED: ", "ASSET_MISSING: ", "TIMEOUT: ", "AUDIO: ", "CANCELLED: ", "DENIED: ", "MIDI: ", "VRM: "]) {
     if (text.startsWith(prefix)) return text.slice(prefix.length);
   }
   if (name === "NotAllowedError") return "카메라 권한이 거부되었습니다.\n주소창 왼쪽 아이콘 → 카메라 → 허용 후 '다시 시도'";
@@ -536,13 +567,219 @@ function describeError(e: unknown): string {
   return `시작 실패: ${text}`;
 }
 
-/** 모델·wasm 파일이 서버에 있는지 HEAD로 확인. 없으면 결정적인 메시지로 실패한다. */
+// ── 영상 표시 상자·아바타·얼굴 추적 ─────────────────────────
+function isCamView(v: string): v is CamView {
+  return (CAM_VIEWS as readonly string[]).includes(v);
+}
+function applyCamView(v: CamView, persist = true): void {
+  camView = v;
+  camViewSelect.value = v; // 상자 값은 적용 함수가 책임진다(gotcha 12)
+  frame.dataset.camview = v;
+  if (persist) {
+    try {
+      localStorage.setItem(CONFIG.avatar.camViewStorageKey, v);
+    } catch {
+      /* 저장 불가는 무시 */
+    }
+  }
+  if (v !== "video") {
+    void ensureAvatar();
+    requestAnimationFrame(fitAvatar); // display:none → 표시로 바뀐 뒤 레이아웃 반영 후 크기 맞춤
+    if (state === "READY" || state === "PLAYING") startFaceInit();
+  }
+}
+function loadCamView(): void {
+  let v: CamView = CONFIG.avatar.defaultCamView;
+  try {
+    const s = localStorage.getItem(CONFIG.avatar.camViewStorageKey);
+    if (s && isCamView(s)) v = s;
+  } catch {
+    /* 무시 */
+  }
+  applyCamView(v, false);
+}
+camViewSelect.addEventListener("change", () => {
+  const v = camViewSelect.value;
+  if (isCamView(v)) applyCamView(v);
+});
+function fitAvatar(): void {
+  avatar?.resize(avatarCanvas.clientWidth, avatarCanvas.clientHeight, window.devicePixelRatio);
+}
+/** three.js·three-vrm을 처음 필요할 때만 내려받아 아바타 장면을 만든다(메모이즈). 실패하면 영상 모드로 폴백 */
+function ensureAvatar(): Promise<AvatarView> {
+  if (avatarPromise) return avatarPromise;
+  const p = (async () => {
+    const mod = await import("./avatar");
+    const view = new mod.AvatarView(avatarCanvas);
+    view.onContextChange = (lost) => {
+      avatarHint = lost ? "그래픽 컨텍스트가 끊겨 아바타를 잠시 숨깁니다…" : null;
+    };
+    return view;
+  })();
+  avatarPromise = p;
+  p.then((view) => {
+    avatar = view;
+    fitAvatar();
+    return loadDefaultAvatar(view);
+  }).catch((e: unknown) => {
+    console.error(e);
+    if (avatarPromise === p) avatarPromise = null;
+    showNotice(`아바타를 켤 수 없어 카메라 영상으로 표시합니다 (${describeError(e)})`, 6000);
+    applyCamView("video", false);
+  });
+  return p;
+}
+async function loadDefaultAvatar(view: AvatarView): Promise<void> {
+  const info = await loadAvatar(view, CONFIG.avatar.defaultPath, true);
+  if (info) showNotice(`아바타: ${info.name} (VRM ${info.metaVersion})`);
+}
+/** 아바타 로드. 실패하면 null(안내는 avatarHint). 큰 파일은 주 스레드를 수 초 멈추므로 먼저 소리를 끈다 */
+async function loadAvatar(view: AvatarView, url: string, isDefault = false): Promise<AvatarInfo | null> {
+  silence();
+  avatarLoads++;
+  avatarHint = "아바타 불러오는 중…";
+  try {
+    const info = await view.load(url);
+    avatarHint = null;
+    avatarDisabled = false; // 모델 교체는 렌더 오류의 가장 그럴듯한 해결책 — 다시 기회를 준다
+    avatarErrors = 0;
+    return info;
+  } catch (e) {
+    const text = e instanceof Error ? e.message : String(e);
+    if (text.startsWith("CANCELLED: ")) return null; // 뒤에 시작된 로드가 결과를 가져간다
+    if (text.startsWith("VRM_NOT_FOUND: ")) {
+      if (!isDefault) console.error(e);
+      avatarHint = isDefault
+        ? "VRM 파일이 없습니다 — public/avatar.vrm 에 두거나 오른쪽 위 'VRM 불러오기'"
+        : `아바타 로드 실패 — ${text.slice("VRM_NOT_FOUND: ".length)}`;
+      return null;
+    }
+    console.error(e);
+    avatarHint = `아바타 로드 실패 — ${text.replace(/^VRM: /, "")}`;
+    return null;
+  } finally {
+    avatarLoads--;
+  }
+}
+vrmBtn.addEventListener("click", () => vrmInput.click()); // 진짜 button이라 키보드(Enter/Space)로도 열린다
+vrmInput.addEventListener("change", async () => {
+  const file = vrmInput.files?.[0];
+  if (!file) return;
+  try {
+    if (camView === "video") applyCamView("avatar"); // 파일을 골랐다 = 아바타를 보고 싶다
+    const view = await ensureAvatar();
+    const url = URL.createObjectURL(file);
+    try {
+      const info = await loadAvatar(view, url);
+      if (info) showNotice(`아바타: ${info.name} (VRM ${info.metaVersion}) — 새로고침하면 다시 골라야 합니다. 영구 적용은 public/avatar.vrm`, 7000);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch (e) {
+    console.error(e);
+  } finally {
+    vrmInput.value = ""; // 같은 파일을 다시 골라도 change가 나게
+  }
+});
+/** 얼굴 모델 로드. await하지 않고 배경에서 돈다 — 카메라 권한 대기와 겹친다. 실패해도 시작을 막지 않는다 */
+function startFaceInit(): void {
+  if (!faceAvailable || faceInitInFlight || faceTracker.ready || camView === "video") return;
+  const attempt = startAttempt;
+  const isStale = (): boolean => attempt !== startAttempt;
+  faceInitInFlight = true;
+  faceHint = "얼굴 모델 불러오는 중…";
+  faceTracker
+    .init(isStale)
+    .then((d) => {
+      if (isStale()) return;
+      faceHint = null;
+      faceErrors = 0;
+      faceEvery = d === "CPU" ? 2 : 1;
+      if (d === "CPU") showNotice("얼굴 모델 CPU 모드 — 2프레임마다 추적", 5000);
+    })
+    .catch((e: unknown) => {
+      if (isStale()) return;
+      console.warn("얼굴 모델 로드 실패", e);
+      faceHint = null;
+      showNotice(`얼굴 추적 없이 계속합니다 (${describeError(e)})`, 6000);
+    })
+    .finally(() => {
+      if (!isStale()) faceInitInFlight = false; // 무효화된 초기화는 진행 중인 다음 초기화의 플래그를 건드리지 않는다
+    });
+}
+/** 얼굴 추적 + 아바타 반영. 손 처리와 격리 — 예외가 연주를 끊지 않는다 */
+function trackFace(now: number): void {
+  const av = avatar;
+  if (!faceTracker.ready || camView === "video" || !av?.loaded) return;
+  frameCount++;
+  if (frameCount % faceEvery !== 0) return;
+  try {
+    const face = faceTracker.detect(video, now);
+    const present = faceHold.update(face !== null, now);
+    if (face) av.applyFace(face);
+    else if (!present) av.applyFace(null); // 300 ms 넘게 안 보이면 중립으로 완화
+    if (debug) {
+      const m = face?.matrix;
+      // 열 우선이 맞으면 t_col의 z가 카메라 거리(약 −20~−100 cm)이고 t_row는 −1~1 사이의 회전 성분이다
+      faceDebug = m
+        ? `t_col(${m[12]?.toFixed(1)},${m[13]?.toFixed(1)},${m[14]?.toFixed(1)}) t_row(${m[3]?.toFixed(1)},${m[7]?.toFixed(1)},${m[11]?.toFixed(1)}) jaw ${(face.blendshapes["jawOpen"] ?? 0).toFixed(2)}`
+        : "no face";
+    }
+    faceErrors = 0;
+    adaptFaceRate(now);
+  } catch (e) {
+    console.error(e);
+    if (++faceErrors >= CONFIG.face.maxErrors) {
+      faceTracker.close();
+      av.resetPose();
+      faceHint = "얼굴 추적을 껐습니다 (오류 반복) — Reset을 누르면 재시도";
+      showNotice(`얼굴 추적을 껐습니다: ${describeError(e)}`, 6000);
+    }
+  }
+}
+/** 처리 fps가 3초 넘게 20 아래면 얼굴 추적을 2프레임마다 */
+function adaptFaceRate(now: number): void {
+  if (faceEvery >= 2 || now - readyAt < 2000) return;
+  if (fpsNow(now) < CONFIG.face.slowFps) {
+    slowSince ??= now;
+    if (now - slowSince >= CONFIG.face.slowForMs) {
+      faceEvery = 2;
+      showNotice("처리 속도가 낮아 얼굴 추적을 2프레임마다 합니다", 5000);
+    }
+  } else {
+    slowSince = null;
+  }
+}
+/** 아바타 렌더(30 fps 상한, 자체 try/catch — 렌더 예외가 HUD·연주를 끊지 않는다) */
+function renderAvatar(now: number): void {
+  const av = avatar;
+  if (camView === "video" || !av || avatarDisabled) return;
+  if (now - lastAvatarRender < 1000 / CONFIG.avatar.maxFps - 1) return;
+  lastAvatarRender = now;
+  try {
+    av.render();
+    avatarErrors = 0;
+  } catch (e) {
+    console.error(e);
+    if (++avatarErrors >= CONFIG.avatar.maxErrors) {
+      avatarDisabled = true;
+      avatarHint = "아바타 렌더 오류가 반복되어 표시를 껐습니다 — '카메라 영상'으로 바꾸거나 새로고침";
+    }
+  }
+}
+
+/** 모델·wasm 파일이 서버에 있는지 HEAD로 확인. 없으면 결정적인 메시지로 실패한다. 얼굴 모델은 선택 자산이라 없어도 통과. */
 async function checkAssets(): Promise<void> {
   const urls = [CONFIG.tracker.modelPath, `${CONFIG.tracker.wasmPath}/vision_wasm_internal.wasm`];
   for (const u of urls) {
     const r = await fetch(u, { method: "HEAD" });
     if (!r.ok) throw new Error(`ASSET_MISSING: ${u} 를 찾지 못했습니다 (HTTP ${r.status}).\n터미널에서 npm run setup 실행 후 새로고침`);
   }
+  // Vite 개발 서버는 없는 경로에도 index.html(200, text/html)을 돌려주므로 응답 코드만으로는 모자란다. 앞 4바이트만 받아 형식을 본다
+  faceAvailable = await fetch(CONFIG.face.modelPath, { headers: { Range: "bytes=0-3" } })
+    .then((r) => r.ok && !(r.headers.get("content-type") ?? "").includes("text/html"))
+    .catch(() => false);
+  if (!faceAvailable) showNotice("얼굴 모델이 없어 아바타 표정 없이 시작합니다 — npm run setup", 6000);
 }
 
 function resize(): void {
@@ -552,8 +789,10 @@ function resize(): void {
   canvas.height = h;
   frame.style.aspectRatio = `${w} / ${h}`;
   frame.style.width = `min(100vw, calc(100vh * ${w} / ${h}))`;
+  frame.style.setProperty("--cvw", String(w)); // CSS에서 영상 픽셀 단위 환산용(미리보기 여백 ↔ 음량 막대)
   const g = wheelGeometry(w, h, wheelAnchor);
   outsideRest = new Hysteresis(g.restExitR, g.restR);
+  fitAvatar();
 }
 
 function enterError(text: string): void {
@@ -565,6 +804,12 @@ function enterError(text: string): void {
   resetHandState();
   stopCamera(video);
   tracker.close();
+  faceTracker.close(); // 늦게 끝나는 init은 isStale로 스스로 닫힌다
+  faceInitInFlight = false;
+  faceHint = null;
+  faceHold.reset();
+  avatar?.resetPose();
+  delete frame.dataset.live;
   setState("ERROR");
   message = text;
   startBtn.disabled = false;
@@ -596,6 +841,7 @@ startBtn.addEventListener("click", async () => {
     message = "손 추적 모델 불러오는 중…";
     const delegate = await withTimeout(tracker.init(isStale), CONFIG.startup.modelMs, "모델 로드");
     if (state !== "STARTING") return; // 그 사이 ERROR로 바뀌었으면 중단
+    startFaceInit(); // 선택 기능: 기다리지 않고 카메라 권한 대기와 겹친다
     message = "카메라 여는 중… (권한을 허용해 주세요)";
     await withTimeout(openCamera(video, onCameraEnded, isStale), CONFIG.startup.cameraMs, "카메라 열기(권한 창에서 '허용'을 눌러야 합니다)");
     if (state !== "STARTING") return; // 카메라 트랙이 열리자마자 끊긴 경우 등
@@ -608,6 +854,10 @@ startBtn.addEventListener("click", async () => {
     consecutiveErrors = 0;
     cameraFps = readCameraFps();
     setState("READY");
+    readyAt = performance.now();
+    slowSince = null;
+    frame.dataset.live = "1"; // 미리보기 표시 허용
+    startFaceInit(); // STARTING 중 상자를 아바타로 바꾼 경우. 이미 시작됐으면 가드에서 no-op
     scheduleVideoFrame();
     startBtn.textContent = "실행 중";
     if (delegate === "CPU") showNotice("GPU 모드 실패 → CPU 모드(느림, 약 107 ms/프레임)", 6000);
@@ -627,6 +877,12 @@ resetBtn.addEventListener("click", () => {
   silence();
   midiOut?.panic();
   resetHandState();
+  avatar?.resetPose();
+  faceHold.reset();
+  if (wasActive && !faceTracker.ready) {
+    faceHint = null;
+    startFaceInit(); // 오류로 꺼진 얼굴 추적 재시도(안내문대로)
+  }
   // 연주 중/대기 중일 때만 '손을 뗄 때까지 무음'을 건다. IDLE·ERROR에서 누른 Reset이 다음 시작을 막지 않게 한다
   armed = !wasActive;
   if (wasActive) {
@@ -734,7 +990,7 @@ function processFrame(now: number): void {
     const ratio = emaRatio.next(opennessRatio(pts));
     lastRatio = ratio;
     openPercent = opennessPercent(ratio, CONFIG.openness.closedRatio, CONFIG.openness.openRatio);
-    handView = { palm, tips: TIP_IDS.map((i) => pts[i] ?? palm) };
+    handView = { palm, tips: TIP_IDS.map((i) => pts[i] ?? palm), all: pts };
 
     if (selectMode === "fingers") {
       // 손목·네 뿌리 관절이 화면 밖이면 외삽 좌표라 판정을 보류한다
@@ -856,6 +1112,7 @@ function fpsNow(now: number): number {
 }
 
 function draw(now: number): void {
+  renderAvatar(now);
   if (notice && now > noticeUntil) notice = null;
   const active = state === "READY" || state === "PLAYING";
   const scene: Scene = {
@@ -865,6 +1122,7 @@ function draw(now: number): void {
     selected: shownSector,
     hand: handView,
     otherPalms,
+    connections: HAND_CONNECTIONS,
     openPercent,
     level,
     muted: state !== "PLAYING" || level < 0.02, // 바닥 근처의 사실상 무음도 연하게 표시
@@ -880,10 +1138,12 @@ function draw(now: number): void {
     debug: debug
       ? `${selectMode === "fingers" ? `h ${openPercent.toFixed(0)}%` : `ratio ${lastRatio.toFixed(2)}`} | ${labelsForDebug.join(" ") || "no hand"} | ${state}${armed ? "" : " (Reset 대기)"}${
           selectMode === "fingers" ? ` | ${fingerDebug || "-"} raw ${rawFingerCount ?? "-"} stable ${fingerStable.value ?? "-"}` : ""
-        }`
+        }${faceDebug ? ` | face ${faceDebug}` : ""}`
       : null,
   };
   drawScene(ctx, scene);
+  const msg = avatarHint ?? faceHint ?? "";
+  if (avatarMsg.textContent !== msg) avatarMsg.textContent = msg;
 }
 
 /** 카메라 프레임 한 장 처리. 예외는 여기서 격리한다 — 1회면 소리만 끄고 계속, 연속 30회면 ERROR. */
@@ -901,6 +1161,7 @@ function handleFrame(now: number): void {
       enterError(`처리 중 오류가 반복됩니다.\n${describeError(e)}`);
     }
   }
+  trackFace(now); // 선택 기능 — 손 처리와 격리
 }
 
 function onVideoFrame(now: DOMHighResTimeStamp, _meta: VideoFrameCallbackMetadata): void {
@@ -937,6 +1198,7 @@ function loop(now: number): void {
         silence();
         if (wasPlaying) showNotice("영상이 멈춰 소리를 껐습니다", 3000);
       }
+      if (now - lastFrameAt > CONFIG.face.lostGraceMs) avatar?.applyFace(null); // 프레임이 멈추면 얼굴도 300 ms 뒤 중립으로(Ema). 손 유무와 무관
     }
   } catch (e) {
     console.error(e);
@@ -955,6 +1217,8 @@ loadPalette();
 loadSwap();
 loadWheelAnchor();
 loadMode();
+loadCamView();
+window.addEventListener("resize", fitAvatar);
 renderOutputOptions();
 void restoreOutputPref();
 try {

@@ -9,6 +9,12 @@
 | 손이 있는데 인식 안 됨 | 왼손만 보임 / 라벨 반대 / 점수 0.7 미만(가장자리) / 조명 | `?debug=1` 라벨, 회색 점 여부 | 오른손 사용; '좌우 바꾸기' 체크; 손을 화면 안쪽으로 |
 | 손 점이 실제 손과 좌우 반대 | 좌표 변환(1-x) 누락/중복 | main.ts processFrame | 변환 한 번만 적용 |
 | 코드가 경계에서 깜빡임 | 데드존 작음 / 필터 꺼짐 | config.sector.deadZoneDeg, smoothing.alpha | 데드존 3→5도, alpha 0.5→0.35 |
+| 아바타가 안 보이고 "VRM 파일이 없습니다" | public/avatar.vrm 없음 / 개발 서버가 HTML 폴백 | 상단 중앙 안내, `curl -r 0-3 http://127.0.0.1:5173/avatar.vrm`이 glTF인지 | 파일을 public/avatar.vrm에 두거나 "VRM 불러오기" |
+| "아바타 로드 실패 — VRM(glb) 형식이 아닙니다" | glb가 아닌 파일(.vrm 확장자만 바꾼 파일, HTML) | 파일 첫 4바이트 `glTF` | VRoid Studio에서 다시 내보내기 |
+| 아바타 표정이 안 움직임 | 얼굴 모델 없음(`npm run setup` 미실행) / 얼굴 추적이 예외 10회로 꺼짐 / 영상 표시가 "카메라 영상" | 상단 안내 문구, 콘솔 "얼굴 추적을 껐습니다" | `npm run setup`; Reset 후 다시 시작; 상자를 아바타로 |
+| 고개가 반대로 움직임 | MediaPipe 축 규약 가정(headAxisSign) 틀림 / VRM 0.x 부호 | config.avatar.headAxisSign, 콘솔 metaVersion | 해당 축 부호를 −1로; 0.x 모델이면 avatar.ts flip 확인 |
+| 탭을 숨겼다 돌아오면 머리카락이 튐 | dt 상한이 풀림 | config.avatar.maxDeltaSec | 0.1 유지 |
+| 처리 fps가 아바타 켠 뒤 크게 떨어짐 | 얼굴 추적 매 프레임 + 렌더 | 좌상단 fps, 3초 뒤 "2프레임마다" 알림 | 자동 전환 대기, 또는 "아바타만"으로 미리보기 끄기, DPR 상한 낮추기 |
 | 쉼 원판/주먹 경계에서 따다닥 재어택 | 히스테리시스 간격 부족 | config.wheel.restExitFactor, openness.unmuteAbovePercent | 1.3→1.5, 20→25 |
 | 주먹 쥐어도 소리 안 멈춤 | closed/open 보정값이 사용자 손과 안 맞음 | `?debug=1` ratio 읽기 | Task 11 절차로 재실측 |
 | Reset 뒤 소리가 안 남 | Reset 대기(armed=false) 상태 — 의도된 동작 | `?debug=1`에 "(Reset 대기)" | 손을 내렸다 올리기; 휠 모드는 쉼 원판 지나기, 손가락 모드는 주먹 쥐었다 펴기 |

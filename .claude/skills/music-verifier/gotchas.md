@@ -88,3 +88,24 @@
     **원인** level 곡선 지수(1.5)와 levelToCc의 제곱 복원 전제 불일치
     **규칙** setLevel(level, control)로 선형 제어값을 함께 넘기고 MIDI는 control을 쓴다
     **적용 시점** 음량 곡선·출력 인터페이스 수정 때
+
+18. **증상** 얼굴 추적(선택 기능)의 예외가 손 처리 try/catch로 들어가 매 프레임 소리가 끊기고 1초 뒤 ERROR
+    **원인** 선택 기능을 핵심 경로의 격리 구역 안에 넣음
+    **규칙** 선택 기능(얼굴·아바타 렌더)은 자기 try/catch + 자기 카운터. 연속 10회면 그 기능만 끄고 알림. 핵심 경로의 consecutiveErrors는 건드리지 않는다
+    **적용 시점** 새 추적·렌더 기능 추가 시
+
+19. **증상** Vite 개발 서버에서 없는 파일을 HEAD/GET하면 404가 아니라 index.html 200이 온다(HEAD는 파일이 있어도 text/html)
+    **원인** SPA 폴백. 자산 존재 확인을 HEAD 응답 코드로 하면 거짓 양성
+    **규칙** 선택 자산은 GET으로 받아 내용(매직 바이트)을 검사한다. VRM은 첫 4바이트 "glTF". 필수 자산(모델·wasm)의 HEAD 검사는 파일이 실제로 있으면 content-type 무관하게 ok라 그대로 둠
+    **적용 시점** 자산 존재 확인 코드 작성 시
+
+20. **증상** display:none 상태의 three.js 캔버스에 resize가 들어가 종횡비 0 → 투영 행렬 NaN → 다시 보여도 빈 화면
+    **원인** clientWidth 0을 그대로 setSize/aspect에 넣음
+    **규칙** resize는 크기 0이면 건너뛰고, 표시로 바뀔 때 requestAnimationFrame 뒤 1회 재측정
+    **적용 시점** 숨겼다 보이는 캔버스 다룰 때
+
+21. **증상** 동적 import로 분리하려던 모듈이 메인 번들에 묶임
+    **원인** main.ts에 값 import가 하나라도 있으면 Vite가 청크를 나누지 않음
+    **규칙** 동적 import 대상은 main.ts에서 `import type`으로만 참조한다. `npx vite build`로 avatar-*.js 청크가 따로 나오는지 확인(2026-10-07: avatar 753 kB, index 452 kB)
+    **적용 시점** 무거운 선택 기능 추가 시
+
