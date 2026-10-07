@@ -1,6 +1,9 @@
 import { CONFIG } from "./config";
 import type { Point } from "./mapping";
 
+export type WheelAnchor = "center" | "bottom-left" | "bottom-right";
+export const WHEEL_ANCHORS: readonly WheelAnchor[] = ["center", "bottom-left", "bottom-right"];
+
 export interface WheelGeometry {
   cx: number;
   cy: number;
@@ -10,17 +13,19 @@ export interface WheelGeometry {
   labelR: number;
 }
 
-export function wheelGeometry(width: number, height: number): WheelGeometry {
-  const outerR = height * CONFIG.wheel.outerRadiusRatio;
+/** 휠의 중심·반지름. 구석 배치는 반지름을 줄이고 바닥 선(85%) 위에 두어 얼굴과 하단 바를 피한다 */
+export function wheelGeometry(width: number, height: number, anchor: WheelAnchor = "center"): WheelGeometry {
   const restR = height * CONFIG.wheel.restRadiusRatio;
-  return {
-    cx: width / 2,
-    cy: height / 2,
-    outerR,
-    restR,
-    restExitR: restR * CONFIG.wheel.restExitFactor,
-    labelR: outerR * CONFIG.wheel.labelRadiusRatio,
-  };
+  const common = { restR, restExitR: restR * CONFIG.wheel.restExitFactor };
+  if (anchor === "center") {
+    const outerR = height * CONFIG.wheel.outerRadiusRatio;
+    return { cx: width / 2, cy: height / 2, outerR, labelR: outerR * CONFIG.wheel.labelRadiusRatio, ...common };
+  }
+  const outerR = height * CONFIG.wheel.cornerRadiusRatio;
+  const margin = width * CONFIG.wheel.cornerSideMargin;
+  const cx = anchor === "bottom-right" ? width - margin - outerR : margin + outerR;
+  const cy = height * CONFIG.wheel.cornerBottomLine - outerR;
+  return { cx, cy, outerR, labelR: outerR * CONFIG.wheel.labelRadiusRatio, ...common };
 }
 
 export interface HandView {
@@ -42,6 +47,7 @@ export interface Scene {
   cameraFps: number | null; // 카메라 트랙이 보고하는 프레임 수
   delegate: "GPU" | "CPU" | null;
   outputName: string; // 현재 소리 출력(브라우저 신디 / MIDI: 포트 이름)
+  anchor: WheelAnchor;
   message: string | null; // 중앙 안내문
   notice: string | null; // 상단 짧은 알림
   debug: string | null; // ?debug=1 일 때만
@@ -62,7 +68,7 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
 export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
   const { width: W, height: H } = s;
   ctx.clearRect(0, 0, W, H);
-  const g = wheelGeometry(W, H);
+  const g = wheelGeometry(W, H, s.anchor);
   const n = Math.max(1, s.palette.length);
   const span = 360 / n;
 

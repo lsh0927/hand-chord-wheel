@@ -18,7 +18,7 @@ import {
   TIP_IDS,
   type Point,
 } from "./mapping";
-import { drawScene, wheelGeometry, type Scene, type HandView } from "./overlay";
+import { drawScene, wheelGeometry, WHEEL_ANCHORS, type Scene, type HandView, type WheelAnchor } from "./overlay";
 
 type State = "IDLE" | "STARTING" | "READY" | "PLAYING" | "ERROR";
 
@@ -46,6 +46,8 @@ let output: ChordOutput = toneOutput;
 let midiOut: MidiOutput | null = null;
 const midi = new MidiManager();
 const outputSelect = $<HTMLSelectElement>("output");
+const wheelPosSelect = $<HTMLSelectElement>("wheelpos");
+let wheelAnchor: WheelAnchor = CONFIG.wheel.defaultAnchor;
 let switchSeq = 0; // 출력 전환 세대. 늦게 끝난 전환은 버린다
 let switchingTo: string | null = null; // 전환 진행 중 상자에 보여 줄 값
 let lastOptionsKey = ""; // 상자 재구성 생략용
@@ -416,6 +418,41 @@ outputSelect.addEventListener("change", () => {
 });
 midi.onChange(() => renderOutputOptions());
 
+// ── 휠 위치 ─────────────────────────────────────────────
+function isWheelAnchor(v: string): v is WheelAnchor {
+  return (WHEEL_ANCHORS as readonly string[]).includes(v);
+}
+
+function applyWheelAnchor(a: WheelAnchor): void {
+  wheelAnchor = a;
+  wheelPosSelect.value = a;
+  // 중심이 바뀌면 손의 각도도 바뀌므로 표시 칸을 비우고 다음 프레임에 새로 고른다
+  shownSector = null;
+  outsideRest?.reset();
+  silence();
+}
+
+function loadWheelAnchor(): void {
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(CONFIG.wheel.anchorStorageKey);
+  } catch {
+    saved = null;
+  }
+  applyWheelAnchor(saved && isWheelAnchor(saved) ? saved : CONFIG.wheel.defaultAnchor);
+}
+
+wheelPosSelect.addEventListener("change", () => {
+  const v = wheelPosSelect.value;
+  if (!isWheelAnchor(v)) return;
+  applyWheelAnchor(v);
+  try {
+    localStorage.setItem(CONFIG.wheel.anchorStorageKey, v);
+  } catch {
+    /* 무시 */
+  }
+});
+
 // ── 좌우 바꾸기 ──────────────────────────────────────────
 function loadSwap(): void {
   try {
@@ -466,7 +503,7 @@ function resize(): void {
   canvas.height = h;
   frame.style.aspectRatio = `${w} / ${h}`;
   frame.style.width = `min(100vw, calc(100vh * ${w} / ${h}))`;
-  const g = wheelGeometry(w, h);
+  const g = wheelGeometry(w, h, wheelAnchor);
   outsideRest = new Hysteresis(g.restExitR, g.restR);
 }
 
@@ -601,7 +638,7 @@ document.addEventListener("keydown", () => void resumeAudioIfNeeded());
 function processFrame(now: number): void {
   const W = canvas.width;
   const H = canvas.height;
-  const geo = wheelGeometry(W, H);
+  const geo = wheelGeometry(W, H, wheelAnchor);
   const center: Point = { x: geo.cx, y: geo.cy };
 
   const sel = tracker.detect(video, now, { swap, prevPalm: prevPalmNorm });
@@ -712,6 +749,7 @@ function draw(now: number): void {
     cameraFps: active ? cameraFps : null,
     delegate: active ? tracker.delegate : null,
     outputName: outputLabel(),
+    anchor: wheelAnchor,
     message,
     notice,
     debug: debug ? `ratio ${lastRatio.toFixed(2)} | ${labelsForDebug.join(" ") || "no hand"} | ${state}${armed ? "" : " (Reset 대기)"}` : null,
@@ -786,6 +824,7 @@ function loop(now: number): void {
 resize();
 loadPalette();
 loadSwap();
+loadWheelAnchor();
 renderOutputOptions();
 void restoreOutputPref();
 try {
