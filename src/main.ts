@@ -2,6 +2,8 @@ import { CONFIG } from "./config";
 import { assertCameraSupported, openCamera, stopCamera } from "./camera";
 import { HandTracker } from "./tracker";
 import { ToneOutput } from "./audio";
+import type { ChordOutput } from "./output";
+import { MidiManager, MidiOutput, isWebMidiSupported } from "./midi";
 import { chordToMidi, parsePalette } from "./chords";
 import {
   angleDeg,
@@ -39,7 +41,14 @@ if (!ctx2d) throw new Error("Canvas 2D 컨텍스트를 만들 수 없습니다")
 const ctx: CanvasRenderingContext2D = ctx2d;
 const debug = new URLSearchParams(location.search).has("debug");
 
-const output = new ToneOutput();
+const toneOutput = new ToneOutput();
+let output: ChordOutput = toneOutput;
+let midiOut: MidiOutput | null = null;
+const midi = new MidiManager();
+const outputSelect = $<HTMLSelectElement>("output");
+let switchSeq = 0; // 출력 전환 세대. 늦게 끝난 전환은 버린다
+let switchingTo: string | null = null; // 전환 진행 중 상자에 보여 줄 값
+let lastOptionsKey = ""; // 상자 재구성 생략용
 const tracker = new HandTracker();
 const hold = new HoldTracker(CONFIG.hold.lostGraceMs);
 const emaX = new Ema(CONFIG.smoothing.alpha);
@@ -195,6 +204,176 @@ paletteInput.addEventListener("blur", () => {
   }
 });
 
+// ── 소리 출력 선택 ──────────────────────────────────────
+type OutputPref = { kind: "tone" } | { kind: "midi"; id: string; name: string };
+
+function outputLabel(): string {
+  return midiOut ? `MIDI: ${midiOut.name}` : "브라우저 신디";
+}
+
+function saveOutputPref(p: OutputPref): void {
+  try {
+    localStorage.setItem(CONFIG.midi.storageKey, JSON.stringify(p));
+  } catch {
+    /* 무시 */
+  }
+}
+
+function loadOutputPref(): OutputPref | null {
+  try {
+    const raw = localStorage.getItem(CONFIG.midi.storageKey);
+    if (!raw) return null;
+    const p: unknown = JSON.parse(raw);
+    if (typeof p !== "object" || p === null) return null;
+    const o = p as { kind?: unknown; id?: unknown; name?: unknown };
+    if (o.kind === "midi" && typeof o.id === "string" && typeof o.name === "string") return { kind: "midi", id: o.id, name: o.name };
+    if (o.kind === "tone") return { kind: "tone" };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** 상자 다시 그리기. 내용이 같으면 건너뛴다(자기 open()으로 오는 statechange마다 드롭다운이 닫히지 않게) */
+function renderOutputOptions(): void {
+  const items: Array<[string, string, boolean]> = [["tone", "출력: 브라우저 신디", false]];
+  if (!isWebMidiSupported()) {
+    items.push(["midi-unsupported", window.isSecureContext ? "MIDI 미지원 (Chrome 필요)" : "MIDI 사용 불가 (localhost로 여세요)", true]);
+  } else if (!midi.ready) {
+    items.push(["midi-request", "MIDI 장치 찾기…", false]);
+  } else {
+    const ports = midi.outputs();
+    if (ports.length === 0) items.push(["midi-none", "MIDI 포트 없음 (IAC 드라이버를 켜세요)", true]);
+    for (const p of ports) items.push([`midi:${p.id}`, `MIDI: ${p.name}`, false]);
+  }
+  const wanted = switchingTo ?? (midiOut ? `midi:${midiOut.portId}` : "tone");
+  const key = JSON.stringify([items, wanted]);
+  if (key === lastOptionsKey) return;
+  lastOptionsKey = key;
+  outputSelect.innerHTML = "";
+  for (const [value, text, disabled] of items) {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = text;
+    o.disabled = disabled;
+    outputSelect.appendChild(o);
+  }
+  outputSelect.value = items.some(([v]) => v === wanted) ? wanted : "tone";
+}
+
+/** 브라우저 신디로. persist=false는 장애 복귀(사용자 선택을 덮어쓰지 않는다) */
+function switchToTone(reason?: string, persist = true): void {
+  switchSeq++;
+  switchingTo = null;
+  silence();
+  if (midiOut) {
+    midiOut.dispose();
+    midiOut = null;
+  }
+  output = toneOutput;
+  if (persist) saveOutputPref({ kind: "tone" });
+  renderOutputOptions();
+  showNotice(reason ? `${reason} → 브라우저 신디로 전환` : "출력: 브라우저 신디", reason ? 6000 : 2500);
+  void toneOutput
+    .start()
+    .then(() => {
+      audioSuspended = !toneOutput.isRunning();
+      if (audioSuspended && output === toneOutput) showNotice("소리가 꺼져 있습니다. 화면을 한 번 클릭하세요", 6000);
+    })
+    .catch(() => {});
+}
+
+async function switchToMidi(id: string): Promise<void> {
+  if (midiOut && midiOut.portId === id) return; // 같은 포트 재선택
+  const port = midi.getOutput(id);
+  if (!port) {
+    showNotice("선택한 MIDI 포트를 찾지 못했습니다(연결 끊김?)", 4000);
+    renderOutputOptions();
+    return;
+  }
+  const seq = ++switchSeq;
+  switchingTo = `midi:${id}`;
+  renderOutputOptions();
+  const next = new MidiOutput(port, (reason) => {
+    if (midiOut === next) switchToTone(reason, false); // 현재 출력이 아닌 인스턴스의 실패는 무시
+  });
+  try {
+    await next.start();
+  } catch (e) {
+    if (seq === switchSeq) {
+      switchingTo = null;
+      showNotice(describeError(e), 6000);
+      renderOutputOptions();
+    }
+    return;
+  }
+  if (seq !== switchSeq) {
+    next.dispose(); // 그 사이 다른 선택이 이겼다
+    return;
+  }
+  switchingTo = null;
+  if (!next.isRunning()) {
+    next.dispose();
+    showNotice(`MIDI 포트가 연결 상태가 아닙니다: ${next.name}`, 5000);
+    renderOutputOptions();
+    return;
+  }
+  silence(); // 이전 출력의 음을 놓는다
+  if (midiOut) midiOut.dispose();
+  midiOut = next;
+  output = next;
+  saveOutputPref({ kind: "midi", id: next.portId, name: next.name });
+  renderOutputOptions();
+  showNotice(`MIDI 출력: ${next.name} — GarageBand에서 소프트웨어 악기 트랙을 선택해 두세요`, 6000);
+}
+
+async function requestMidiAndPick(): Promise<void> {
+  try {
+    await midi.request();
+  } catch (e) {
+    showNotice(describeError(e), 7000);
+    renderOutputOptions();
+    return;
+  }
+  const ports = midi.outputs();
+  renderOutputOptions();
+  const only = ports[0];
+  if (ports.length === 1 && only) {
+    await switchToMidi(only.id);
+    return;
+  }
+  if (ports.length === 0) {
+    showNotice("MIDI 출력 포트가 없습니다. Audio MIDI 설정 → MIDI 스튜디오 → IAC 드라이버 → '장치가 온라인 상태' 체크", 8000);
+    return;
+  }
+  showNotice(`MIDI 포트 ${ports.length}개를 찾았습니다. 상자에서 고르세요`, 5000);
+}
+
+async function restoreOutputPref(): Promise<void> {
+  const pref = loadOutputPref();
+  if (!pref || pref.kind !== "midi" || !isWebMidiSupported()) return;
+  try {
+    await midi.request();
+  } catch {
+    showNotice(`저장된 MIDI 출력 '${pref.name}'을 복원하지 못해 브라우저 신디로 시작합니다`, 6000);
+    renderOutputOptions();
+    return;
+  }
+  const byName = midi.findByName(pref.name);
+  const target = midi.findById(pref.id) ?? (byName.length === 1 ? byName[0] : null) ?? null;
+  renderOutputOptions();
+  if (target) await switchToMidi(target.id);
+  else showNotice(`저장된 MIDI 포트 '${pref.name}'을 찾지 못해 브라우저 신디로 시작합니다`, 6000);
+}
+
+outputSelect.addEventListener("change", () => {
+  const v = outputSelect.value;
+  if (v === "tone") switchToTone();
+  else if (v === "midi-request") void requestMidiAndPick();
+  else if (v.startsWith("midi:")) void switchToMidi(v.slice(5));
+});
+midi.onChange(() => renderOutputOptions());
+
 // ── 좌우 바꾸기 ──────────────────────────────────────────
 function loadSwap(): void {
   try {
@@ -220,7 +399,7 @@ swapInput.addEventListener("change", () => {
 function describeError(e: unknown): string {
   const name = e instanceof DOMException ? e.name : "";
   const text = e instanceof Error ? e.message : e instanceof Event ? `리소스 로드 실패 (${e.type})` : String(e);
-  for (const prefix of ["UNSUPPORTED: ", "ASSET_MISSING: ", "TIMEOUT: ", "AUDIO: ", "CANCELLED: "]) {
+  for (const prefix of ["UNSUPPORTED: ", "ASSET_MISSING: ", "TIMEOUT: ", "AUDIO: ", "CANCELLED: ", "DENIED: ", "MIDI: "]) {
     if (text.startsWith(prefix)) return text.slice(prefix.length);
   }
   if (name === "NotAllowedError") return "카메라 권한이 거부되었습니다.\n주소창 왼쪽 아이콘 → 카메라 → 허용 후 '다시 시도'";
@@ -254,6 +433,7 @@ function enterError(text: string): void {
   startAttempt++; // 진행 중이던 시작 시도를 무효화 → 늦게 성공한 카메라/모델은 즉시 정리된다
   cancelVideoFrame();
   silence();
+  midiOut?.panic();
   resetHandState();
   stopCamera(video);
   tracker.close();
@@ -275,7 +455,7 @@ startBtn.addEventListener("click", async () => {
   const attempt = ++startAttempt;
   const isStale = (): boolean => attempt !== startAttempt;
   // 사용자 제스처 컨텍스트 안에서 동기적으로 시작. 거부는 아래 await에서 받되, 그 전에 다른 단계가 실패해도 미처리 거부가 남지 않게 한다.
-  const audioReady = output.start().catch((e: unknown) => {
+  const audioReady = toneOutput.start().catch((e: unknown) => {
     throw new Error(`AUDIO: 소리를 켤 수 없습니다 (${e instanceof Error ? e.message : String(e)})`);
   });
   audioReady.catch(() => {});
@@ -303,7 +483,7 @@ startBtn.addEventListener("click", async () => {
     scheduleVideoFrame();
     startBtn.textContent = "실행 중";
     if (delegate === "CPU") showNotice("GPU 모드 실패 → CPU 모드(느림, 약 107 ms/프레임)", 6000);
-    if (!output.isRunning()) {
+    if (output === toneOutput && !toneOutput.isRunning()) {
       audioSuspended = true;
       showNotice("소리가 아직 꺼져 있습니다. 화면을 한 번 클릭하세요", 6000);
     }
@@ -317,6 +497,7 @@ startBtn.addEventListener("click", async () => {
 resetBtn.addEventListener("click", () => {
   const wasActive = state === "READY" || state === "PLAYING";
   silence();
+  midiOut?.panic();
   resetHandState();
   // 연주 중/대기 중일 때만 '손을 뗄 때까지 무음'을 건다. IDLE·ERROR에서 누른 Reset이 다음 시작을 막지 않게 한다
   armed = !wasActive;
@@ -324,7 +505,14 @@ resetBtn.addEventListener("click", () => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) silence();
+  if (document.hidden) {
+    silence();
+    midiOut?.panic(); // 탭을 닫을 때도 hidden이 pagehide보다 먼저 와서 1차 방어선이 된다
+  }
+});
+window.addEventListener("pagehide", () => {
+  silence();
+  midiOut?.panic();
 });
 
 // 스트림 도중 해상도가 바뀌면(장치 전환 등) 캔버스·프레임 비율·쉼 원판 반지름을 다시 맞춘다
@@ -344,7 +532,8 @@ function readCameraFps(): number | null {
 }
 
 // 오디오 컨텍스트가 멈추면(절전 복귀·출력 장치 전환) 안내하고, 다음 클릭/키에서 재개
-output.onStateChange((running) => {
+toneOutput.onStateChange((running) => {
+  if (output !== toneOutput) return;
   audioSuspended = !running;
   if (!running && (state === "READY" || state === "PLAYING")) {
     silence();
@@ -354,8 +543,8 @@ output.onStateChange((running) => {
 async function resumeAudioIfNeeded(): Promise<void> {
   if (!audioSuspended) return;
   try {
-    await output.resume();
-    if (output.isRunning()) {
+    await toneOutput.resume();
+    if (toneOutput.isRunning()) {
       audioSuspended = false;
       showNotice("소리 켜짐", 1500);
     }
@@ -432,7 +621,12 @@ function processFrame(now: number): void {
       return;
     }
     if (state !== "PLAYING" || sector !== currentSector) {
-      output.play(midi);
+      const out = output;
+      out.play(midi);
+      if (output !== out) {
+        silence(); // 전송 중 출력이 교체됨(끊김 복귀). 다음 프레임에 새 출력으로 다시 친다
+        return;
+      }
       currentSector = sector;
       setState("PLAYING");
     }
@@ -475,6 +669,7 @@ function draw(now: number): void {
     fps: active ? fpsNow(now) : 0,
     cameraFps: active ? cameraFps : null,
     delegate: active ? tracker.delegate : null,
+    outputName: outputLabel(),
     message,
     notice,
     debug: debug ? `ratio ${lastRatio.toFixed(2)} | ${labelsForDebug.join(" ") || "no hand"} | ${state}${armed ? "" : " (Reset 대기)"}` : null,
@@ -549,6 +744,8 @@ function loop(now: number): void {
 resize();
 loadPalette();
 loadSwap();
+renderOutputOptions();
+void restoreOutputPref();
 try {
   assertCameraSupported();
 } catch (e) {

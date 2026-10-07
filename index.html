@@ -17,6 +17,7 @@
       .btn { border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 600 14px system-ui; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
       .btn:disabled { opacity: 0.5; cursor: default; }
       .btn:focus-visible { outline: 2px solid var(--accent); }
+      .sel { border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 600 13px system-ui; padding: 8px 10px; border-radius: 8px; max-width: 260px; }
       #reset { position: absolute; z-index: 2; top: 16px; right: 16px; }
       #bottom { position: absolute; z-index: 2; left: 16px; right: 56px; bottom: 44px; display: flex; gap: 8px; align-items: center; }
       #palette { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 500 14px ui-monospace, monospace; }
@@ -36,6 +37,7 @@
         <div id="palette-msg"></div>
         <div id="bottom">
           <input id="palette" type="text" spellcheck="false" autocomplete="off" aria-label="코드 팔레트" />
+          <select id="output" class="sel" aria-label="소리 출력"></select>
           <label id="swap-label"><input id="swap" type="checkbox" /> 좌우 바꾸기</label>
           <button id="start" class="btn" type="button">Start</button>
         </div>
