@@ -495,3 +495,15 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ## Self-Review
 - Spec 3-1·3-2(Task 1), 3-3(StableValue), 3-4(processFingerFrame), 3-5(heightPercent·level), 3-6(applyMode·저장), 4장(drawFingerPanel·HUD·숫자), 5장(엣지: 팔레트 5개 미만 → sector ≥ length 처리, 소실 → resetHandState가 fingerStable 초기화), 6장(테스트·Playwright·실측).
 - 타입: `Scene.mode/fingerCount` ↔ draw(); `processFingerFrame(pts, palm, H)` 인자 ↔ 호출; `fingerFlags` 출력 형식 ↔ 테스트 "t I M r p".
+
+---
+
+## 부록: 실패 분석 반영 (2판 변경 요약) — 구현은 이 부록 기준
+1. `tests/fingers.test.ts` StableValue 첫 테스트: `update(2,169) → 1`, `update(2,170) → 2`.
+2. `src/fingers.ts`: `fingerRatios(lm): FingerRatios`(순수, 다섯 비율) + `FingerDetector`(Hysteresis 5개: 손가락 enter 1.20/exit 1.10, 엄지 1.18/1.05; `update(lm): FingerStates`, `updateRatios(r)`, `reset()`). `fingerStates(lm)`는 히스테리시스 없는 즉시 판정으로 남겨 테스트·디버그에 쓴다. 합성 손의 펴진 엄지 끝을 (470, 495)로 바꿔 ratio 1.33으로.
+3. `src/main.ts`: `const fingerDetector = new FingerDetector()`; processFingerFrame(pts, palm, H, now, inFrame): inFrame=false면 stable 갱신·판정 생략(직전 유지, fingerDebug="손목 화면 밖"); percent 하한 10; `level = (percent/100) ** CONFIG.fingers.levelExponent`; resetHandState·applyMode에서 `fingerDetector.reset()`; Reset 안내문 모드별; debug `h nn%`.
+4. `src/overlay.ts`: `muted` 대신 `dim = s.muted || s.level < 0.02`로 배지·부채꼴 연하게; 안내문 상자를 앵커 반대편에(`messageBox`); 패널 제목 아래 작은 안내.
+5. `index.html`: 위치 상자 문구 "위치: …", aria-label "패널 위치".
+6. `src/config.ts`: fingers에 `enterRatio 1.20, exitRatio 1.10, thumbEnterRatio 1.18, thumbExitRatio 1.05, levelExponent 1.5, minPercent 10, frameMargin 0.05`(extendRatio·thumbRatio는 즉시 판정용으로 유지).
+7. README·symptom-map: 휠 모드 한정 표기, 손가락 모드 사용법, 주먹 해제.
+8. 테스트 추가: FingerDetector 경계 시퀀스(1.25→on, 1.15→유지, 1.05→off, 1.15→유지 off), heightPercent span≤0 → 0, 21개 미만 throw, StableValue 같은 후보 유지.
