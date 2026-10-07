@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hand Chord Wheel</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root { color-scheme: dark; --accent: rgb(120, 190, 255); }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #0b0c10; color: #fff; font-family: system-ui, -apple-system, sans-serif; }
+      #stage { width: 100vw; height: 100vh; display: grid; place-items: center; background: #000; overflow: hidden; }
+      /* 비디오 비율의 프레임. 버튼·입력도 이 안에 두어 캔버스와 같은 박스를 공유한다 */
+      #frame { position: relative; aspect-ratio: 16 / 9; width: min(100vw, calc(100vh * 16 / 9)); }
+      #video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #video { transform: scaleX(-1); object-fit: cover; } /* 거울 표시. 캔버스는 좌표를 1-x로 바꿔 그린다 */
+      .btn { border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 600 14px system-ui; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+      .btn:disabled { opacity: 0.5; cursor: default; }
+      .btn:focus-visible { outline: 2px solid var(--accent); }
+      #reset { position: absolute; z-index: 2; top: 16px; right: 16px; }
+      #bottom { position: absolute; z-index: 2; left: 16px; right: 56px; bottom: 44px; display: flex; gap: 8px; align-items: center; }
+      #palette { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 500 14px ui-monospace, monospace; }
+      #palette.invalid { border-color: #ff8a80; }
+      #swap-label { display: flex; align-items: center; gap: 6px; font: 500 13px system-ui; white-space: nowrap; background: rgba(0,0,0,0.55); padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); }
+      #palette-msg { position: absolute; z-index: 2; left: 16px; bottom: 84px; font: 500 13px system-ui; color: #9fe3a1; }
+      #palette-msg.error { color: #ff8a80; }
+      #start { font-size: 15px; }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <div id="frame">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <button id="reset" class="btn" type="button">Reset</button>
+        <div id="palette-msg"></div>
+        <div id="bottom">
+          <input id="palette" type="text" spellcheck="false" autocomplete="off" aria-label="코드 팔레트" />
+          <label id="swap-label"><input id="swap" type="checkbox" /> 좌우 바꾸기</label>
+          <button id="start" class="btn" type="button">Start</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

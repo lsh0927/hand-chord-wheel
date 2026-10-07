@@ -203,3 +203,22 @@ READY/PLAYING ──루프 예외 연속 30회(약 1 s)──▶ ERROR (예외 1
 | NOTE | Reset이 한 프레임만 무음 | 3-10 Reset 대기 |
 | NOTE | 소문자 코드 표기 | 3-8 정규화 |
 | NOTE | 테스트 랜드마크에 visibility 필드 누락, hands 순수 모듈 분리, roundRect 폴백, 16:9 프레임, 포커스 복귀 | 계획 Task 7·8·9 |
+
+## 9. 코드 리뷰 반영 (2026-10-07)
+
+리뷰어 4명(정확성·설계 준수·런타임 함정·테스트/스크립트) + 발견마다 반박자 2명. 확정 16건, 기각 2건. 반영 내용:
+
+| 구분 | 내용 | 반영 |
+|---|---|---|
+| MAJOR | 타임아웃 뒤 늦게 성공한 getUserMedia/createFromOptions가 ERROR 화면 뒤에서 살아남음(LED 켜짐, HandLandmarker 누수) | 시작 시도 세대 번호 `startAttempt` + `isStale()`; openCamera·tracker.init이 늦은 자원을 즉시 닫고 CANCELLED; enterError가 세대를 올리고 tracker.close() |
+| MAJOR | 연속 오류 카운터가 매 틱 초기화되어 ERROR 전이 불가 | processFrame 정상 완료 직후에만 0으로 |
+| MAJOR | verify-all.sh 대용량 추적 검사가 종료 코드만 봐서 한 경로만 추적돼도 PASS | `git ls-files` 출력 유무로 판정, 저장소 밖이면 WARN |
+| MINOR | STARTING 중 카메라 ended → enterError 중복·안내문 덮어쓰기 | enterError 멱등 가드, await 뒤 `state !== "STARTING"` 가드 |
+| MINOR | 오류·시작·Reset·손 소실의 상태 초기화가 제각각 | `resetHandState()`로 통일 |
+| MINOR | 점수 미달·화면 밖 오른손도 '다른 손만 감지'로 안내 | `rejectedWanted` 카운트로 안내문 분기 |
+| MINOR | IDLE/ERROR에서 Reset이 armed=false를 남겨 시작 뒤 첫 프레임 무음 | READY/PLAYING에서만 대기 적용, 시작 성공 시 armed=true |
+| MINOR | 영상 해상도 변경 미대응 | video 'resize' 이벤트에서 resize()+상태 정리 |
+| MINOR | READY에서 영상이 멈추면 손 표시가 고정됨(기각됐지만 저비용) | 워치독이 READY에서도 표시를 지움 |
+| MINOR | verify-all.sh: wasm 바이트 미검증, npx 자동 설치 위험 | node_modules 원본과 바이트 비교, `--no-install` + 존재 검사 |
+| MINOR | setup-assets.sh: cp 실패 미검사, 개수만 셈 | cp 보호, 원본 개수와 비교 |
+| MINOR | 경계값 테스트 부재(0.8/1.7, 500 ms, 20/15) | mapping·hands 테스트 추가 (총 81개) |
