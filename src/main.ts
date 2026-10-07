@@ -82,6 +82,7 @@ let frameCount = 0;
 let slowSince: number | null = null;
 let readyAt = 0;
 let faceHint: string | null = null;
+let faceDebug = ""; // ?debug=1: 행렬 평행이동 성분(열 우선 가정 검증용)
 let avatar: AvatarView | null = null;
 let avatarPromise: Promise<AvatarView> | null = null;
 let avatarLoads = 0;
@@ -713,6 +714,13 @@ function trackFace(now: number): void {
     const present = faceHold.update(face !== null, now);
     if (face) av.applyFace(face);
     else if (!present) av.applyFace(null); // 300 ms 넘게 안 보이면 중립으로 완화
+    if (debug) {
+      const m = face?.matrix;
+      // 열 우선이 맞으면 t_col의 z가 카메라 거리(약 −20~−100 cm)이고 t_row는 −1~1 사이의 회전 성분이다
+      faceDebug = m
+        ? `t_col(${m[12]?.toFixed(1)},${m[13]?.toFixed(1)},${m[14]?.toFixed(1)}) t_row(${m[3]?.toFixed(1)},${m[7]?.toFixed(1)},${m[11]?.toFixed(1)}) jaw ${(face.blendshapes["jawOpen"] ?? 0).toFixed(2)}`
+        : "no face";
+    }
     faceErrors = 0;
     adaptFaceRate(now);
   } catch (e) {
@@ -1118,7 +1126,7 @@ function draw(now: number): void {
     debug: debug
       ? `${selectMode === "fingers" ? `h ${openPercent.toFixed(0)}%` : `ratio ${lastRatio.toFixed(2)}`} | ${labelsForDebug.join(" ") || "no hand"} | ${state}${armed ? "" : " (Reset 대기)"}${
           selectMode === "fingers" ? ` | ${fingerDebug || "-"} raw ${rawFingerCount ?? "-"} stable ${fingerStable.value ?? "-"}` : ""
-        }`
+        }${faceDebug ? ` | face ${faceDebug}` : ""}`
       : null,
   };
   drawScene(ctx, scene);

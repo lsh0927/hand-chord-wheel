@@ -85,6 +85,7 @@ export const CONFIG = {
     minFaceDetectionConfidence: 0.5,
     minFacePresenceConfidence: 0.5,
     minTrackingConfidence: 0.5,
+    matrixColumnMajor: true, // ASSUMPTION: 변환 행렬 16개가 열 우선(평행이동이 12~14번). ?debug=1의 t_col/t_row로 확인 — 틀리면 false
     lostGraceMs: 300, // 얼굴이 잠깐 안 잡혀도 이 시간은 마지막 표정·자세 유지, 지나면 중립으로 완화
     slowFps: 20, // 처리 fps가 이 값 아래로
     slowForMs: 3000, // 이 시간 이상 지속되면 2프레임마다 추적

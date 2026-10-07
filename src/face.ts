@@ -65,7 +65,11 @@ export class FaceTracker {
     const blendshapes: Record<string, number> = {};
     for (const c of cats) blendshapes[c.categoryName] = c.score;
     const data = r.facialTransformationMatrixes[0]?.data;
-    return { blendshapes, matrix: data && data.length === 16 ? Array.from(data) : null };
+    if (!data || data.length !== 16) return { blendshapes, matrix: null };
+    const m = Array.from(data);
+    // 내부 표현은 열 우선(three.js Matrix4.elements와 동일). 행 우선으로 오는 환경이면 전치한다
+    const matrix = CONFIG.face.matrixColumnMajor ? m : [0, 1, 2, 3].flatMap((c) => [0, 1, 2, 3].map((r2) => m[r2 * 4 + c] ?? 0));
+    return { blendshapes, matrix };
   }
 
   close(): void {
