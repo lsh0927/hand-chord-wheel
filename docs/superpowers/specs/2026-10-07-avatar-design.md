@@ -83,3 +83,15 @@
 
 ## 6. 2단계 예고
 아바타 팔: 어깨–팔꿈치 두 관절 IK로 손목을 추적 위치(화면 좌표 → 아바타 공간 평면)에 두고, 손가락 뼈는 손가락 모드의 펴짐 상태로 굽힘. 그때 유령 손은 선택 사항이 된다.
+
+## 7. 설계 중 확인한 사실 (2026-10-07)
+
+| 항목 | 확인 방법 | 결과 |
+|---|---|---|
+| 영상을 숨겨도 프레임 콜백이 오는가 | Playwright Chromium에서 `canvas.captureStream(30)` 영상에 `requestVideoFrameCallback`을 1초간 세어 봄 | 보임 30/s, `opacity: 0` 31/s, `visibility: hidden` 30/s, `display: none` 30/s, 22% 축소 29/s — 전부 유지. 설계대로 `opacity: 0` 사용(가장 안전) |
+| 머리 회전 공식 | three.js 0.186.1 `src/math/Euler.js`의 `case 'YXZ'`(m23·m13·m33·m21·m22·m31·m11)와 계획의 `headEulerFromMatrix` 비교 | 동일. 행렬 원소는 열 우선(`Matrix4.elements`와 같은 규약) |
+| three-vrm 시그니처 | `@pixiv/three-vrm@3.5.5`·`three-vrm-core@3.5.5` 타입 정의 | `VRMUtils.rotateVRM0(vrm)`, `removeUnnecessaryVertices(root)`, `combineSkeletons(root)`, `deepDispose(object3D)`, `expressionManager.getExpression/setValue`, `humanoid.getNormalizedBoneNode("head")`, `meta.metaVersion: "0" \| "1"`(0.x는 `title?`, 1.0은 `name`), 프리셋 aa/oh/ou/ee/blinkLeft/blinkRight/happy/angry/surprised 존재 |
+| @types/three 경로 | `@types/three@0.186.0` package.json exports | `three/addons/*` → `examples/jsm/*` 매핑 있음(GLTFLoader.d.ts 존재) |
+| 얼굴 모델 | `storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task` HEAD | 200, 3,758,596 bytes |
+| VRoid Studio 내보내기 | vroid.com 공지 v1.20.0(2023-03-02) | VRM 0.0과 VRM 1.0 둘 다 선택 가능. README에 "VRM 1.0 권장, 0.0도 자동 회전으로 지원"으로 안내 |
+| 검증용 샘플 VRM | pixiv/three-vrm 저장소 `VRM1_Constraint_Twist_Sample.vrm` | 200, 10,776,032 bytes(VRM 1.0). 로드 확인용으로만 임시 사용, 커밋 금지 |
