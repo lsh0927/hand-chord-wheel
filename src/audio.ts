@@ -32,7 +32,7 @@ export class ToneOutput implements ChordOutput {
     this.heldHz = hz;
   }
 
-  setLevel(level: number): void {
+  setLevel(level: number, _control?: number): void {
     const v = Math.min(1, Math.max(0, level));
     this.gain?.gain.rampTo(v, CONFIG.audio.rampSec);
   }

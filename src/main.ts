@@ -721,7 +721,10 @@ function processFrame(now: number): void {
 
   if (hand) {
     // 잠깐(≤100ms) 끊긴 건 연속으로 보고, 더 길게 사라졌다 나타나면 필터를 초기화해 이전 위치에서 끌려오지 않게 한다
-    if (prevSeen !== null && now - prevSeen > CONFIG.smoothing.resetAfterGapMs) resetFilters();
+    if (prevSeen !== null && now - prevSeen > CONFIG.smoothing.resetAfterGapMs) {
+      resetFilters();
+      fingerDetector.reset(); // 공백 뒤 손가락 펴짐 판정도 새로 시작(안정화 타이머는 StableValue가 공백을 제외한다)
+    }
     prevPalmNorm = hand.palm;
 
     // 거울 표시 좌표(픽셀)로 변환: x → (1 - x). 펼침 비율도 이 등방 좌표로 계산한다
@@ -775,7 +778,7 @@ function processFrame(now: number): void {
       setState("PLAYING");
     }
     level = (openPercent / 100) ** 2;
-    output.setLevel(level);
+    output.setLevel(level, openPercent / 100);
     return;
   }
 
@@ -800,7 +803,12 @@ function processFingerFrame(pts: Point[], palm: Point, H: number, now: number, i
   } else {
     fingerDebug = "손목·뿌리 화면 밖 — 판정 보류";
   }
-  const stable = fingerStable.value ?? 0;
+  const stable = fingerStable.value;
+  if (stable === null) {
+    // 아직 확정된 적이 없는데 판정 보류 중(손목이 화면 밖) — Reset 대기(armed)를 건드리지 않는다
+    silence();
+    return;
+  }
   if (stable === 0) {
     shownSector = null;
     armed = true; // 주먹 = 쉼이자 재무장
@@ -835,7 +843,7 @@ function processFingerFrame(pts: Point[], palm: Point, H: number, now: number, i
     setState("PLAYING");
   }
   level = (openPercent / 100) ** CONFIG.fingers.levelExponent;
-  output.setLevel(level);
+  output.setLevel(level, openPercent / 100);
 }
 
 function fpsNow(now: number): number {

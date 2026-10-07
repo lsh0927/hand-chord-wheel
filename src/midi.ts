@@ -1,6 +1,6 @@
 import { CONFIG } from "./config";
 import type { ChordOutput } from "./output";
-import { chordChange, controlChange, levelToCc, noteOff, panicMessages, type MidiMessage } from "./midi-messages";
+import { chordChange, clamp7, controlChange, levelToCc, noteOff, panicMessages, type MidiMessage } from "./midi-messages";
 
 export interface MidiPortInfo {
   id: string;
@@ -135,8 +135,9 @@ export class MidiOutput implements ChordOutput {
     this.sendAll(msgs);
   }
 
-  setLevel(level: number): void {
-    const v = levelToCc(level);
+  /** control(선형 0~1)이 있으면 그에 비례하는 CC, 없으면 level의 제곱을 되돌린 값 */
+  setLevel(level: number, control?: number): void {
+    const v = control === undefined ? levelToCc(level) : clamp7(Math.min(1, Math.max(0, control)) * 127);
     if (v === this.lastCc) return;
     this.lastCc = v;
     this.sendAll([controlChange(CONFIG.midi.channel, CONFIG.midi.ccExpression, v)]);

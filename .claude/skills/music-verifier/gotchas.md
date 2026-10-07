@@ -78,3 +78,13 @@
     **원인** 유지 시간은 '후보가 바뀐 시점'부터 센다
     **규칙** 테스트 시각은 후보 시작 + holdMs로 계산한다
     **적용 시점** 안정화 로직 테스트 작성 때
+
+16. **증상** 손가락 모드에서 손목이 화면 밖인 채로 Reset 직후 소리가 바로 남 / 공백 뒤 스친 값이 즉시 확정됨
+    **원인** 확정값 null을 0(주먹)으로 취급해 재무장 · StableValue가 update 공백을 유지 시간에 합산
+    **규칙** null과 0을 구분한다. StableValue는 공백이 holdMs를 넘으면 후보 타이머를 재시작한다
+    **적용 시점** fingers.ts StableValue·main.ts processFingerFrame 수정 때
+
+17. **증상** MIDI CC11이 손 높이에 비례하지 않음
+    **원인** level 곡선 지수(1.5)와 levelToCc의 제곱 복원 전제 불일치
+    **규칙** setLevel(level, control)로 선형 제어값을 함께 넘기고 MIDI는 control을 쓴다
+    **적용 시점** 음량 곡선·출력 인터페이스 수정 때

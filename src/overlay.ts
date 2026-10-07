@@ -145,13 +145,16 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
     ctx.fillStyle = `rgba(${BLUE},0.95)`;
     ctx.fill();
     if (s.mode === "fingers" && s.fingerCount !== null) {
+      // 손 옆 원시 개수. 오른쪽 끝(음량 막대)이나 위쪽에서 잘리지 않게 자리를 바꾼다
+      const size = Math.round(H * 0.045);
+      const rightRoom = s.hand.palm.x + 16 + size <= W - 40;
       ctx.fillStyle = "#fff";
-      ctx.textAlign = "left";
+      ctx.textAlign = rightRoom ? "left" : "right";
       ctx.textBaseline = "middle";
-      ctx.font = `700 ${Math.round(H * 0.045)}px system-ui, sans-serif`;
+      ctx.font = `700 ${size}px system-ui, sans-serif`;
       ctx.shadowColor = "rgba(0,0,0,0.8)";
       ctx.shadowBlur = 6;
-      ctx.fillText(String(s.fingerCount), s.hand.palm.x + 16, s.hand.palm.y - 16);
+      ctx.fillText(String(s.fingerCount), rightRoom ? s.hand.palm.x + 16 : s.hand.palm.x - 16, Math.max(size, s.hand.palm.y - 16));
       ctx.shadowBlur = 0;
     }
   }
@@ -188,7 +191,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
     ctx.font = `600 ${Math.round(H * 0.025)}px system-ui, sans-serif`;
     ctx.fillText(s.notice, W / 2, 16);
   }
-  if (s.message) centerMessage(ctx, W, H, s.message, s.anchor);
+  if (s.message) centerMessage(ctx, W, H, s.message, s.anchor, s.mode, g);
 }
 
 function hudBox(ctx: CanvasRenderingContext2D, x: number, y: number, label: string, value: string, H: number): void {
@@ -206,21 +209,46 @@ function hudBox(ctx: CanvasRenderingContext2D, x: number, y: number, label: stri
   ctx.fillText(value, x + 10, y + Math.round(H * 0.035));
 }
 
-/** 안내문. 가운데 배치면 가로 띠, 구석 배치면 패널·휠 반대편 빈 사분면에 상자로 그려 배지를 가리지 않는다 */
-function centerMessage(ctx: CanvasRenderingContext2D, W: number, H: number, text: string, anchor: WheelAnchor): void {
+/**
+ * 안내문. 가운데 배치: 휠 모드는 가로 띠, 손가락 모드는 배지(위쪽 반원) 아래로 띠를 내린다.
+ * 구석 배치: 패널·휠 반대편에 상자. 상자의 패널 쪽 끝은 패널 바깥 반지름에서 16px 떨어지게 잘라 4:3 영상에서도 겹치지 않는다.
+ */
+function centerMessage(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  text: string,
+  anchor: WheelAnchor,
+  mode: Scene["mode"],
+  g: WheelGeometry,
+): void {
   const lines = text.split("\n");
   const boxH = Math.max(H * 0.16, lines.length * H * 0.045 + H * 0.06);
-  const full = anchor === "center";
-  const boxW = full ? W : W * 0.58;
-  const cx = full ? W / 2 : anchor === "bottom-right" ? W * 0.32 : W * 0.68;
+  const margin = 16;
+  let boxW: number;
+  let cx: number;
+  let cy = H / 2;
+  if (anchor === "center") {
+    boxW = W;
+    cx = W / 2;
+    if (mode === "fingers") cy = g.cy + H * 0.16; // 배지는 중심 위쪽에만 있다
+  } else if (anchor === "bottom-right") {
+    const rightLimit = g.cx - g.outerR - margin;
+    boxW = Math.max(H * 0.3, Math.min(W * 0.58, rightLimit - margin));
+    cx = margin + boxW / 2;
+  } else {
+    const leftLimit = g.cx + g.outerR + margin;
+    boxW = Math.max(H * 0.3, Math.min(W * 0.58, W - margin - leftLimit));
+    cx = W - margin - boxW / 2;
+  }
   ctx.fillStyle = "rgba(0,0,0,0.82)";
-  if (full) ctx.fillRect(0, H / 2 - boxH / 2, W, boxH);
-  else roundedRect(ctx, cx - boxW / 2, H / 2 - boxH / 2, boxW, boxH, 12);
+  if (anchor === "center") ctx.fillRect(0, cy - boxH / 2, W, boxH);
+  else roundedRect(ctx, cx - boxW / 2, cy - boxH / 2, boxW, boxH, 12);
   ctx.fillStyle = "#fff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = `600 ${Math.round(H * (full ? 0.03 : 0.027))}px system-ui, sans-serif`;
-  lines.forEach((line, i) => ctx.fillText(line, cx, H / 2 + (i - (lines.length - 1) / 2) * H * 0.045));
+  ctx.font = `600 ${Math.round(H * (anchor === "center" ? 0.03 : 0.027))}px system-ui, sans-serif`;
+  lines.forEach((line, i) => ctx.fillText(line, cx, cy + (i - (lines.length - 1) / 2) * H * 0.045));
 }
 
 /** 손가락 모드: 번호 배지 5개를 휠 자리에 부채꼴로. 선택 배지는 파랑(무음이면 연하게) */

@@ -122,17 +122,23 @@ export function heightPercent(
   return Math.min(1, Math.max(0, t)) * 100;
 }
 
-/** 값이 holdMs 동안 유지되어야 확정값이 바뀐다. 첫 값은 즉시 확정. */
+/**
+ * 값이 holdMs 동안 유지되어야 확정값이 바뀐다. 첫 값은 즉시 확정.
+ * update가 holdMs 넘게 불리지 않았다면(손 소실·판정 보류) 그 공백은 유지 시간에 넣지 않고 후보 타이머를 다시 시작한다.
+ */
 export class StableValue {
   private candidate: number | null = null;
   private candidateSince = 0;
   private stable: number | null = null;
+  private lastUpdateMs: number | null = null;
   constructor(private readonly holdMs: number) {}
   get value(): number | null {
     return this.stable;
   }
   update(v: number, nowMs: number): number | null {
-    if (v !== this.candidate) {
+    const gap = this.lastUpdateMs === null ? 0 : nowMs - this.lastUpdateMs;
+    this.lastUpdateMs = nowMs;
+    if (v !== this.candidate || gap > this.holdMs) {
       this.candidate = v;
       this.candidateSince = nowMs;
     }
@@ -144,5 +150,6 @@ export class StableValue {
     this.candidate = null;
     this.candidateSince = 0;
     this.stable = null;
+    this.lastUpdateMs = null;
   }
 }

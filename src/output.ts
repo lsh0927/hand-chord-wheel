@@ -4,8 +4,11 @@ export interface ChordOutput {
   start(): Promise<void>;
   /** 들고 있던 음을 놓고 새 화음을 바로 친다. 빈 배열이면 놓기만 한다. */
   play(midi: readonly number[]): void;
-  /** 0~1 음량. */
-  setLevel(level: number): void;
+  /**
+   * level: 0~1 음량(이미 곡선을 거친 값). control: 0~1 선형 제어값(펼침% 또는 높이%).
+   * MIDI 출력은 control이 있으면 그것에 비례하는 CC를 보낸다.
+   */
+  setLevel(level: number, control?: number): void;
   /** 들고 있던 음을 놓는다. */
   stop(): void;
   /** 출력 장치가 실제로 소리를 낼 수 있는 상태인가 */

@@ -167,4 +167,19 @@ describe("StableValue: 120 ms 유지해야 바뀜", () => {
     expect(s.value).toBeNull();
     expect(s.update(2, 1000)).toBe(2);
   });
+  it("update가 120 ms 넘게 멈췄다 돌아오면(손 소실·판정 보류) 공백은 유지 시간에 넣지 않는다", () => {
+    const s = new StableValue(120);
+    s.update(1, 0);
+    s.update(3, 100); // 후보 3 시작
+    expect(s.update(3, 500)).toBe(1); // 400 ms 공백 → 후보 타이머 재시작(확정 1 유지)
+    expect(s.update(3, 619)).toBe(1);
+    expect(s.update(3, 620)).toBe(3);
+  });
+  it("공백이 120 ms 이하면 그대로 이어서 센다", () => {
+    const s = new StableValue(120);
+    s.update(1, 0);
+    s.update(3, 100);
+    expect(s.update(3, 200)).toBe(1); // 100 ms 공백, 후보 유지 100 ms
+    expect(s.update(3, 220)).toBe(3);
+  });
 });
