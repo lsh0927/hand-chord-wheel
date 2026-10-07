@@ -6,6 +6,10 @@
 | src/fingers.ts | 손가락 판정·개수·안정화·높이 | tests/fingers.test.ts | 1~5 전환, 엄지 오판, 손 재진입 첫 코드 |
 | src/chords.ts | 팔레트, 표기 정규화, MIDI 번호 | tests/chords.test.ts | 12개 코드 소리 |
 | src/hands.ts | 오른손 선택 | tests/hands.test.ts | 두 손 동시 노출, 왼손만 노출 안내 |
+| src/avatar-map.ts | 표정 계수→VRM 가중치, 행렬→머리 각 | tests/avatar-map.test.ts | 입·눈·웃음 반응, 고개 방향 부호 |
+| src/face.ts | 얼굴 추적(선택 기능) | tsc | 모델 없이 Start 가능, 얼굴 예외가 연주를 끊지 않음 |
+| src/avatar.ts | VRM 로드·표정·머리·렌더 | tsc, 샘플 VRM 로드(Playwright) | VRM 1.0/0.x 둘 다, 팔 내림, 30 fps 상한, 탭 복귀 시 머리카락 튐 없음 |
+| index.html(camview·avatar·topbar) | 영상 표시 상자, 미리보기 위치, z-order | Playwright(상자 전환·저장·안내 문구) | 미리보기가 HUD·패널을 가리지 않음 |
 | src/audio.ts, src/output.ts | 소리, 컨텍스트 상태 | tsc | 코드 전환 시 끊김/겹침, 절전 복귀 |
 | src/camera.ts | 카메라 열기/닫기/종료 감지 | tsc | 재시도 누수(LED), 카메라 뺏김 |
 | src/tracker.ts | 손 검출, GPU 폴백 | tsc | ?debug=1 라벨 확인 |
