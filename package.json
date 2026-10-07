@@ -15,10 +15,13 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.0.1",
-    "tone": "15.1.22",
-    "tonal": "6.4.3"
+    "@pixiv/three-vrm": "3.5.5",
+    "three": "0.186.1",
+    "tonal": "6.4.3",
+    "tone": "15.1.22"
   },
   "devDependencies": {
+    "@types/three": "0.186.0",
     "typescript": "5.9.3",
     "vite": "8.3.3",
     "vitest": "5.0.3"

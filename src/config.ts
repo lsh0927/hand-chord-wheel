@@ -79,6 +79,34 @@ export const CONFIG = {
     levelExponent: 1.5, // 음량 곡선 지수 (실측 때 1/1.5/2 비교)
     frameMargin: 0.05, // 손목·뿌리 관절이 정규화 좌표 [-m, 1+m] 밖이면 판정 보류
   },
+  face: {
+    modelPath: "/models/face_landmarker.task",
+    modelBytes: 3758596,
+    minFaceDetectionConfidence: 0.5,
+    minFacePresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+    lostGraceMs: 300, // 얼굴이 잠깐 안 잡혀도 이 시간은 마지막 표정·자세 유지, 지나면 중립으로 완화
+    slowFps: 20, // 처리 fps가 이 값 아래로
+    slowForMs: 3000, // 이 시간 이상 지속되면 2프레임마다 추적
+    maxErrors: 10, // 연속 예외 10회(30 fps 기준 약 0.3초)면 얼굴 추적만 끈다
+  },
+  avatar: {
+    defaultPath: "/avatar.vrm", // public/avatar.vrm (git 미추적)
+    mirror: true, // 화면이 거울이므로 표정 좌우·yaw·roll을 뒤집는다
+    headAxisSign: { x: 1, y: 1, z: 1 }, // ASSUMPTION: MediaPipe 카메라 좌표(X 오른쪽·Y 위·Z 카메라 쪽)가 three.js와 같다 — 실측 1순위
+    headMaxDeg: { pitch: 35, yaw: 35, roll: 25 },
+    expressionAlpha: 0.5,
+    blinkAlpha: 0.8,
+    headAlpha: 0.4,
+    smileGain: 1.2,
+    maxFps: 30, // 아바타 렌더 상한(얼굴 데이터가 카메라 30 fps라 그 이상은 낭비)
+    maxPixelRatio: 2,
+    maxDeltaSec: 0.1, // 탭 숨김·영상 모드에서 돌아올 때 스프링본 폭발 방지
+    maxErrors: 10, // 렌더 예외 연속 10회면 아바타 표시만 끈다
+    camera: { fov: 30, y: 1.35, z: 1.7 },
+    camViewStorageKey: "hcw.camview.v1",
+    defaultCamView: "avatar", // "avatar" | "avatar-nopip" | "video"
+  },
   midi: {
     channel: 1, // 1~16
     velocity: 100,
