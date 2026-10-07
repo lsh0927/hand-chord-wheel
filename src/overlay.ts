@@ -146,14 +146,15 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
   ctx.fillStyle = `rgba(${BLUE},0.95)`;
   ctx.fillRect(barX, barY + barH * (1 - s.level), 8, barH * s.level);
 
-  // fps / delegate / 디버그
+  // fps / delegate / 디버그 — HUD 상자 바로 아래(하단 입력창과 겹치지 않게)
   ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
+  ctx.textBaseline = "top";
   ctx.font = `500 ${Math.round(H * 0.02)}px system-ui, sans-serif`;
   const slow = s.fps > 0 && s.fps < CONFIG.fps.warnBelow;
   ctx.fillStyle = slow ? "#ffd166" : "rgba(255,255,255,0.7)";
-  ctx.fillText(`${s.fps.toFixed(0)} fps${s.delegate ? ` · ${s.delegate}` : ""}${slow ? " · 느림" : ""}`, 16, H - 20);
-  if (s.debug) ctx.fillText(s.debug, 16, H - 44);
+  const infoY = 16 + Math.round(H * 0.1) + 8;
+  ctx.fillText(`${s.fps.toFixed(0)} fps${s.delegate ? ` · ${s.delegate}` : ""}${slow ? " · 느림" : ""}`, 16, infoY);
+  if (s.debug) ctx.fillText(s.debug, 16, infoY + Math.round(H * 0.026));
 
   if (s.notice) {
     ctx.textAlign = "center";
@@ -183,7 +184,7 @@ function hudBox(ctx: CanvasRenderingContext2D, x: number, y: number, label: stri
 function centerMessage(ctx: CanvasRenderingContext2D, W: number, H: number, text: string): void {
   const lines = text.split("\n");
   const boxH = Math.max(H * 0.16, lines.length * H * 0.045 + H * 0.06);
-  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillStyle = "rgba(0,0,0,0.82)";
   ctx.fillRect(0, H / 2 - boxH / 2, W, boxH);
   ctx.fillStyle = "#fff";
   ctx.textAlign = "center";

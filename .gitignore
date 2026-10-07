@@ -12,3 +12,6 @@ public/wasm/
 _workspace/
 .DS_Store
 *.log
+
+# playwright mcp 산출물
+.playwright-mcp/
