@@ -43,6 +43,7 @@ const avatarCanvas = $<HTMLCanvasElement>("avatar");
 const avatarMsg = $<HTMLDivElement>("avatar-msg");
 const camViewSelect = $<HTMLSelectElement>("camview");
 const vrmInput = $<HTMLInputElement>("vrmfile");
+const vrmBtn = $<HTMLButtonElement>("vrmbtn");
 const ctx2d = canvas.getContext("2d");
 if (!ctx2d) throw new Error("Canvas 2D 컨텍스트를 만들 수 없습니다");
 const ctx: CanvasRenderingContext2D = ctx2d;
@@ -640,6 +641,8 @@ async function loadAvatar(view: AvatarView, url: string, isDefault = false): Pro
   try {
     const info = await view.load(url);
     avatarHint = null;
+    avatarDisabled = false; // 모델 교체는 렌더 오류의 가장 그럴듯한 해결책 — 다시 기회를 준다
+    avatarErrors = 0;
     return info;
   } catch (e) {
     const text = e instanceof Error ? e.message : String(e);
@@ -658,6 +661,7 @@ async function loadAvatar(view: AvatarView, url: string, isDefault = false): Pro
     avatarLoads--;
   }
 }
+vrmBtn.addEventListener("click", () => vrmInput.click()); // 진짜 button이라 키보드(Enter/Space)로도 열린다
 vrmInput.addEventListener("change", async () => {
   const file = vrmInput.files?.[0];
   if (!file) return;
@@ -700,7 +704,7 @@ function startFaceInit(): void {
       showNotice(`얼굴 추적 없이 계속합니다 (${describeError(e)})`, 6000);
     })
     .finally(() => {
-      faceInitInFlight = false;
+      if (!isStale()) faceInitInFlight = false; // 무효화된 초기화는 진행 중인 다음 초기화의 플래그를 건드리지 않는다
     });
 }
 /** 얼굴 추적 + 아바타 반영. 손 처리와 격리 — 예외가 연주를 끊지 않는다 */
@@ -728,7 +732,7 @@ function trackFace(now: number): void {
     if (++faceErrors >= CONFIG.face.maxErrors) {
       faceTracker.close();
       av.resetPose();
-      faceHint = "얼굴 추적을 껐습니다 (오류 반복) — Reset 후 다시 시작하면 재시도";
+      faceHint = "얼굴 추적을 껐습니다 (오류 반복) — Reset을 누르면 재시도";
       showNotice(`얼굴 추적을 껐습니다: ${describeError(e)}`, 6000);
     }
   }
@@ -771,8 +775,9 @@ async function checkAssets(): Promise<void> {
     const r = await fetch(u, { method: "HEAD" });
     if (!r.ok) throw new Error(`ASSET_MISSING: ${u} 를 찾지 못했습니다 (HTTP ${r.status}).\n터미널에서 npm run setup 실행 후 새로고침`);
   }
-  faceAvailable = await fetch(CONFIG.face.modelPath, { method: "HEAD" })
-    .then((r) => r.ok)
+  // Vite 개발 서버는 없는 경로에도 index.html(200, text/html)을 돌려주므로 응답 코드만으로는 모자란다. 앞 4바이트만 받아 형식을 본다
+  faceAvailable = await fetch(CONFIG.face.modelPath, { headers: { Range: "bytes=0-3" } })
+    .then((r) => r.ok && !(r.headers.get("content-type") ?? "").includes("text/html"))
     .catch(() => false);
   if (!faceAvailable) showNotice("얼굴 모델이 없어 아바타 표정 없이 시작합니다 — npm run setup", 6000);
 }
@@ -784,6 +789,7 @@ function resize(): void {
   canvas.height = h;
   frame.style.aspectRatio = `${w} / ${h}`;
   frame.style.width = `min(100vw, calc(100vh * ${w} / ${h}))`;
+  frame.style.setProperty("--cvw", String(w)); // CSS에서 영상 픽셀 단위 환산용(미리보기 여백 ↔ 음량 막대)
   const g = wheelGeometry(w, h, wheelAnchor);
   outsideRest = new Hysteresis(g.restExitR, g.restR);
   fitAvatar();
@@ -800,6 +806,7 @@ function enterError(text: string): void {
   tracker.close();
   faceTracker.close(); // 늦게 끝나는 init은 isStale로 스스로 닫힌다
   faceInitInFlight = false;
+  faceHint = null;
   faceHold.reset();
   avatar?.resetPose();
   delete frame.dataset.live;
@@ -850,6 +857,7 @@ startBtn.addEventListener("click", async () => {
     readyAt = performance.now();
     slowSince = null;
     frame.dataset.live = "1"; // 미리보기 표시 허용
+    startFaceInit(); // STARTING 중 상자를 아바타로 바꾼 경우. 이미 시작됐으면 가드에서 no-op
     scheduleVideoFrame();
     startBtn.textContent = "실행 중";
     if (delegate === "CPU") showNotice("GPU 모드 실패 → CPU 모드(느림, 약 107 ms/프레임)", 6000);
@@ -871,6 +879,10 @@ resetBtn.addEventListener("click", () => {
   resetHandState();
   avatar?.resetPose();
   faceHold.reset();
+  if (wasActive && !faceTracker.ready) {
+    faceHint = null;
+    startFaceInit(); // 오류로 꺼진 얼굴 추적 재시도(안내문대로)
+  }
   // 연주 중/대기 중일 때만 '손을 뗄 때까지 무음'을 건다. IDLE·ERROR에서 누른 Reset이 다음 시작을 막지 않게 한다
   armed = !wasActive;
   if (wasActive) {
@@ -1186,6 +1198,7 @@ function loop(now: number): void {
         silence();
         if (wasPlaying) showNotice("영상이 멈춰 소리를 껐습니다", 3000);
       }
+      if (now - lastFrameAt > CONFIG.face.lostGraceMs) avatar?.applyFace(null); // 프레임이 멈추면 얼굴도 300 ms 뒤 중립으로(Ema). 손 유무와 무관
     }
   } catch (e) {
     console.error(e);

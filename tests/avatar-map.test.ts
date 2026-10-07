@@ -14,6 +14,12 @@ function pitchMatrix(theta: number): number[] {
   const s = Math.sin(theta);
   return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1];
 }
+/** Z축 roll. 행 우선 R = [[c,-s,0],[s,c,0],[0,0,1]] */
+function rollMatrix(theta: number): number[] {
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  return [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+}
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const SIGN1 = { x: 1, y: 1, z: 1 };
 const MAX = { pitch: 35, yaw: 35, roll: 25 };
@@ -61,6 +67,14 @@ describe("headEulerFromMatrix (YXZ, 라디안)", () => {
     expect(headEulerFromMatrix(pitchMatrix(deg(15)), false, SIGN1, MAX).pitch).toBeCloseTo(deg(15), 6);
     expect(headEulerFromMatrix(pitchMatrix(deg(15)), true, SIGN1, MAX).pitch).toBeCloseTo(deg(15), 6);
     expect(headEulerFromMatrix(pitchMatrix(deg(15)), false, { x: -1, y: 1, z: 1 }, MAX).pitch).toBeCloseTo(-deg(15), 6);
+  });
+  it("Z축 10도 회전 → roll 10도, 거울이면 −10도", () => {
+    expect(headEulerFromMatrix(rollMatrix(deg(10)), false, SIGN1, MAX).roll).toBeCloseTo(deg(10), 6);
+    expect(headEulerFromMatrix(rollMatrix(deg(10)), true, SIGN1, MAX).roll).toBeCloseTo(-deg(10), 6);
+  });
+  it("축 부호 y·z가 −1이면 yaw·roll이 각각 반전된다", () => {
+    expect(headEulerFromMatrix(yawMatrix(deg(20)), false, { x: 1, y: -1, z: 1 }, MAX).yaw).toBeCloseTo(-deg(20), 6);
+    expect(headEulerFromMatrix(rollMatrix(deg(10)), false, { x: 1, y: 1, z: -1 }, MAX).roll).toBeCloseTo(-deg(10), 6);
   });
   it("최대각 클램프: yaw 60도 → 35도", () => {
     expect(headEulerFromMatrix(yawMatrix(deg(60)), false, SIGN1, MAX).yaw).toBeCloseTo(deg(35), 6);

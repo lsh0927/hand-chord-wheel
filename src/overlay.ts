@@ -212,7 +212,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
     ctx.textBaseline = "top";
     ctx.fillStyle = "#ffd166";
     ctx.font = `600 ${Math.round(H * 0.025)}px system-ui, sans-serif`;
-    ctx.fillText(s.notice, W / 2, 16);
+    ctx.fillText(s.notice, W / 2, 16, W * 0.6); // 오른쪽 위 버튼 묶음(VRM·Reset) 아래로 꼬리가 들어가지 않게
   }
   if (s.message) centerMessage(ctx, W, H, s.message, s.anchor, s.mode, g);
 }

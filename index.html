@@ -27,7 +27,7 @@
       #frame[data-camview^="avatar"] #video { opacity: 0; } /* 숨겨도 디코딩·프레임 콜백은 유지(2026-10-07 측정 30/s) */
       #frame[data-camview="avatar"][data-live="1"] #video { opacity: 1; inset: auto; width: 22%; height: auto; aspect-ratio: 16 / 9; bottom: 96px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); z-index: 2; }
       #frame[data-camview="avatar"][data-pip="left"] #video { left: 16px; }
-      #frame[data-camview="avatar"][data-pip="right"] #video { right: 48px; } /* 음량 막대(W−28) 회피 */
+      #frame[data-camview="avatar"][data-pip="right"] #video { right: calc(100% * 48 / var(--cvw, 1280)); } /* 영상 픽셀 48 = 음량 막대(W−28) 회피, 축척 무관 */
       #frame[data-camview="video"] #avatar { display: none; }
       #bottom { position: absolute; z-index: 4; left: 16px; right: 56px; bottom: 44px; display: flex; gap: 8px; align-items: center; }
       #palette { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); background: rgba(0,0,0,0.55); color: #fff; font: 500 14px ui-monospace, monospace; }
@@ -45,7 +45,7 @@
         <canvas id="avatar"></canvas>
         <canvas id="overlay"></canvas>
         <div id="topbar">
-          <label id="vrmbtn" class="btn" for="vrmfile">VRM 불러오기</label>
+          <button id="vrmbtn" class="btn" type="button">VRM 불러오기</button>
           <input id="vrmfile" type="file" accept=".vrm" hidden />
           <button id="reset" class="btn" type="button">Reset</button>
         </div>

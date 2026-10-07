@@ -35,6 +35,7 @@ export class FaceTracker {
       created.close();
       throw new Error("CANCELLED: 얼굴 모델 로드가 취소되었습니다");
     }
+    this.landmarker?.close(); // 어떤 경로로든 두 초기화가 겹쳤을 때 먼저 끝난 인스턴스가 새지 않게
     this.landmarker = created;
     this.delegate = delegate;
     this.lastTs = -1;

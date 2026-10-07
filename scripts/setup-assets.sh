@@ -46,6 +46,6 @@ fi
 if [ "$(size_of "$FACE")" = "$FACE_BYTES" ]; then
   echo "PASS: 얼굴 모델 ($FACE_BYTES bytes)"
 else
+  echo "WARN: 얼굴 모델 크기 $(size_of "$FACE") != $FACE_BYTES — 받은 파일을 지웁니다. 손 추적·소리는 정상, 아바타 표정만 꺼집니다"
   rm -f "$FACE"
-  echo "WARN: 얼굴 모델 없음 — 손 추적·소리는 정상, 아바타 표정만 꺼집니다"
 fi
