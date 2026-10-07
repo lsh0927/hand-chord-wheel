@@ -48,3 +48,13 @@
    **원인** MediaStream을 재생하는 video의 currentTime은 연속으로 증가해 rAF 틱마다 '새 프레임'으로 보임
    **규칙** 카메라 프레임 처리는 video.requestVideoFrameCallback으로 건다(없을 때만 currentTime 비교로 대체)
    **적용 시점** main.ts 프레임 루프 수정 때
+
+10. **증상** MIDI 전송 실패로 신디 복귀 직후 손이 같은 칸에 있는데 무음
+    **원인** fail()→onFatal→switchToTone이 play() 도중 동기로 돌아 processFrame이 '음 없는 PLAYING'을 만듦
+    **규칙** 출력 전환 콜백은 queueMicrotask로 미루고, processFrame은 play 뒤 출력 객체가 바뀌었으면 상태를 덮어쓰지 않는다
+    **적용 시점** midi.ts fail()/main.ts processFrame 수정 때
+
+11. **증상** 같은 포트를 감싼 MidiOutput이 둘 생기면 끊김 감지가 사라짐
+    **원인** port.onstatechange 단일 슬롯을 대입·null로 덮어씀
+    **규칙** 포트 이벤트는 addEventListener/removeEventListener로 인스턴스별 등록, 등록은 open() 성공 뒤
+    **적용 시점** midi.ts 수정 때

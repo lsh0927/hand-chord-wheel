@@ -31,13 +31,24 @@ npm run dev     # http://127.0.0.1:5173 를 Chrome에서 열기
 - `src/chords.ts` 코드 이름→MIDI 번호, 팔레트 파싱 (tonal 6.4.3)
 - `src/hands.ts` MediaPipe 결과에서 오른손 고르기 (순수 함수, 테스트 있음)
 - `src/tracker.ts` MediaPipe Hand Landmarker 1.0.1 (GPU, 실패 시 CPU)
-- `src/audio.ts` Tone.js 15 PolySynth. `ChordOutput` 인터페이스 뒤에 있어 2차에 MIDI 출력을 추가할 수 있음
+- `src/audio.ts` Tone.js 15 PolySynth, `src/midi.ts` Web MIDI 출력 — 둘 다 같은 `ChordOutput` 인터페이스. `src/midi-messages.ts`는 메시지 바이트 순수 함수(테스트 있음)
 - `src/camera.ts`, `src/overlay.ts`, `src/main.ts` 카메라 / Canvas 그리기 / 상태 전이
 - 설계·계획·실패 분석 문서: `docs/superpowers/`
 
+## GarageBand로 연주하기 (MIDI 출력)
+1. **IAC 드라이버 켜기**: Audio MIDI 설정 앱(응용 프로그램 → 유틸리티) → 메뉴 윈도우 → MIDI 스튜디오 표시 → "IAC 드라이버" 더블클릭 → "장치가 온라인 상태" 체크. 포트 목록에 "버스 1"이 있으면 됩니다.
+2. **GarageBand**: 새 프로젝트 → 소프트웨어 악기 트랙 → 악기 선택. 처음에는 스트링/패드 계열이나 Smart Controls에서 아르페지에이터를 켠 신스를 권합니다. GarageBand는 연결된 모든 MIDI 입력을 **선택된 트랙** 하나로 받으므로 그 트랙을 선택해 두세요.
+3. **웹앱**: 하단 "출력" 상자에서 "MIDI 장치 찾기…" → Chrome 권한 허용 → IAC 버스가 하나면 자동 선택됩니다. 좌상단 정보 줄에 `출력 MIDI: IAC 드라이버 버스 1`이 보이면 연결된 것입니다. 선택은 저장되어 다음에 자동으로 복원됩니다.
+4. 손 펼침은 CC11(익스프레션)으로 나갑니다. 다른 파라미터에 걸고 싶으면 GarageBand Smart Controls의 학습(Learn) 기능으로 CC11을 원하는 노브에 배우게 하세요.
+
+문제 해결
+- 소리가 안 남: GarageBand에서 악기 트랙이 **선택**되어 있는지, 트랙 헤더의 MIDI 입력 표시가 손을 움직일 때 깜빡이는지, IAC가 온라인인지 확인. Chrome 주소창 왼쪽 아이콘에서 MIDI 권한 상태도 확인. LAN 주소(http://192.168.…)에서는 MIDI를 쓸 수 없으니 localhost로 여세요.
+- 음이 걸려서 계속 울림: 웹앱 Reset을 누르면 모든 음 끄기(CC123)와 모든 소리 끄기(CC120)가 나갑니다. 탭을 숨기거나 닫아도 자동으로 나갑니다(탭 종료 시 전달은 보장이 아니라 최선).
+- 포트가 뽑히거나 꺼지면 자동으로 브라우저 신디로 돌아가며 상단에 안내가 뜹니다. 저장된 선택은 유지되어 다음 실행 때 다시 시도합니다.
+
 ## 검증
 ```bash
-npm run verify   # 타입 검사 + 단위 테스트(81개) + 자산 확인 + 시크릿 검사 + 대용량 파일 미추적 확인
+npm run verify   # 타입 검사 + 단위 테스트(101개) + 자산 확인 + 시크릿 검사 + 대용량 파일 미추적 확인
 ```
 
 ## 실측 기록
@@ -45,9 +56,8 @@ npm run verify   # 타입 검사 + 단위 테스트(81개) + 자산 확인 + 시
 - 펼침 비율: 활짝 편 손 1.32, 꽉 쥔 주먹 0.53 → `openness.openRatio = 1.27`, `closedRatio = 0.58` (각 0.05 여유). 편 손 100%, 주먹 0%, 무음 경계 15%는 비율 0.68, 재개 20%는 0.72.
 - 처리 속도: GPU 모드. 좌상단에 '처리 N fps · 카메라 M fps'가 함께 표시된다(카메라 프레임마다 한 번만 처리).
 
-## 2차 계획
-- Web MIDI → IAC Driver → GarageBand/Logic Pro 출력 (Chrome 전용)
-- 왼손 기능, One Euro Filter, 녹음
+## 다음 계획
+- 스트럼 벨로시티(손을 펴는 속도로 세기), 곡별 코드 팔레트 프리셋, 왼손 기능, One Euro Filter
 
 ## 참고한 공개 프로젝트
 - [soundgo](https://github.com/Gojaehyeon/soundgo) (MIT) — 코드 휠·펼침 표시 아이디어

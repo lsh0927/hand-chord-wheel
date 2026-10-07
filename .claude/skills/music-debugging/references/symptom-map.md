@@ -15,3 +15,8 @@
 | fps 15 미만 | CPU 모드 폴백 / 다른 탭·앱 GPU 점유 | 좌상단 `CPU` 표시 | 콘솔 GPU 실패 원인 확인; 해상도 1280→960 |
 | 코드 전환 시 음이 빠짐 | maxPolyphony가 32 미만으로 바뀜 | 콘솔 "Max polyphony exceeded" | config.audio.maxPolyphony 32 |
 | 영상이 멈추고 "영상이 멈춰 소리를 껐습니다" | 카메라 프레임 정지(절전·다른 앱) | 카메라 LED, 다른 앱 | 다른 앱 종료 후 '다시 시도' 또는 새로고침 |
+| MIDI 포트가 상자에 안 보임 | 권한 거부 / IAC 오프라인 / Safari / LAN 주소 | 상단 알림 문구, Audio MIDI 설정 | 주소창 MIDI 권한 허용; IAC '장치가 온라인 상태'; Chrome + localhost |
+| GarageBand에 소리 안 남(상자는 MIDI) | 트랙 미선택 / 다른 입력 장치 설정 / 채널 | GarageBand 트랙 헤더 MIDI 표시등 | 악기 트랙 선택; 환경설정 → 오디오/MIDI 입력 확인 |
+| 음이 걸려 계속 울림 | 패닉 미전송(강제 종료 등) | — | Reset 클릭(CC123·120 전송); GarageBand 트랙 음소거 후 해제 |
+| MIDI 전환 뒤 브라우저 소리도 같이 남 | 출력 교체 전 stop 누락 | main.ts switchToMidi의 silence() | silence() 호출 순서 확인 |
+| 포트가 멀쩡한데 갑자기 신디로 전환됨 | 전송 연속 실패 5회 | 콘솔 "MIDI 전송 실패" | IAC 상태 확인; sendErrors가 성공 시 0으로 초기화되는지 |

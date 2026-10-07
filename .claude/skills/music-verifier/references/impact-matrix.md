@@ -12,3 +12,4 @@
 | src/main.ts | 상태 전이, 시작 절차, 루프 | tsc | 수동 합격 기준 7개 |
 | src/config.ts | 모든 임계값·타임아웃 | 전체 테스트 | 수동 합격 기준 7개 |
 | scripts/*.sh, .gitignore | 자산/저장소 | verify-all.sh 미추적 검사 | 새 clone 재현 |
+| src/midi.ts, src/midi-messages.ts | MIDI 출력, 패닉, 전환 | tests/midi-messages.test.ts | 가짜 MIDI 브라우저 확인, GarageBand 실측 |
