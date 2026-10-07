@@ -26,6 +26,11 @@ fi
 if [ ! -d "$WASM_SRC" ]; then
   echo "FAIL: $WASM_SRC 없음 — 먼저 npm install"; exit 1
 fi
-cp "$WASM_SRC"/* "$WASM_DST"/
+cp "$WASM_SRC"/* "$WASM_DST"/ || { echo "FAIL: wasm 복사 실패"; exit 1; }
+src_count=$(ls "$WASM_SRC" | wc -l | tr -d ' ')
 count=$(ls "$WASM_DST" | wc -l | tr -d ' ')
-[ "$count" -ge 6 ] && echo "PASS: wasm ${count}개 복사" || { echo "FAIL: wasm 파일 ${count}개 (6개 기대)"; exit 1; }
+if [ "$count" -ge "$src_count" ] && [ "$count" -ge 6 ]; then
+  echo "PASS: wasm ${count}개 복사 (원본 ${src_count}개)"
+else
+  echo "FAIL: wasm ${count}개 (원본 ${src_count}개, 최소 6개)"; exit 1
+fi

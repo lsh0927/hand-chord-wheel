@@ -72,6 +72,7 @@ let otherOnlySince: number | null = null;
 let lastOtherNotice = -Infinity;
 let labelsForDebug: string[] = [];
 let paletteMsgTimer: number | null = null;
+let startAttempt = 0; // Start 시도 세대 번호. 타임아웃·재시도로 무효화된 시도의 늦은 결과를 버리는 데 쓴다
 const frameTimes: number[] = [];
 
 function setState(s: State): void {
@@ -87,6 +88,21 @@ function resetFilters(): void {
   emaX.reset();
   emaY.reset();
   emaRatio.reset();
+}
+
+/** 손 관련 상태를 한 번에 초기화. Reset·손 소실·오류 진입·시작 성공에서 공통으로 쓴다. */
+function resetHandState(): void {
+  handView = null;
+  otherPalms = [];
+  shownSector = null;
+  prevPalmNorm = null;
+  openPercent = 0;
+  lastRatio = 0;
+  otherOnlySince = null;
+  hold.reset();
+  resetFilters();
+  sounding.reset();
+  outsideRest?.reset();
 }
 
 /** 소리를 멈추고 READY로. 표시 칸은 호출자가 정한다. */
@@ -198,7 +214,7 @@ swapInput.addEventListener("change", () => {
 function describeError(e: unknown): string {
   const name = e instanceof DOMException ? e.name : "";
   const text = e instanceof Error ? e.message : e instanceof Event ? `리소스 로드 실패 (${e.type})` : String(e);
-  for (const prefix of ["UNSUPPORTED: ", "ASSET_MISSING: ", "TIMEOUT: ", "AUDIO: "]) {
+  for (const prefix of ["UNSUPPORTED: ", "ASSET_MISSING: ", "TIMEOUT: ", "AUDIO: ", "CANCELLED: "]) {
     if (text.startsWith(prefix)) return text.slice(prefix.length);
   }
   if (name === "NotAllowedError") return "카메라 권한이 거부되었습니다.\n주소창 왼쪽 아이콘 → 카메라 → 허용 후 '다시 시도'";
@@ -228,11 +244,12 @@ function resize(): void {
 }
 
 function enterError(text: string): void {
+  if (state === "ERROR") return; // 멱등: 먼저 들어온 안내문을 유지한다
+  startAttempt++; // 진행 중이던 시작 시도를 무효화 → 늦게 성공한 카메라/모델은 즉시 정리된다
   silence();
-  handView = null;
-  otherPalms = [];
-  shownSector = null;
+  resetHandState();
   stopCamera(video);
+  tracker.close();
   setState("ERROR");
   message = text;
   startBtn.disabled = false;
@@ -248,6 +265,8 @@ function onCameraEnded(): void {
 startBtn.addEventListener("click", async () => {
   startBtn.disabled = true;
   setState("STARTING");
+  const attempt = ++startAttempt;
+  const isStale = (): boolean => attempt !== startAttempt;
   // 사용자 제스처 컨텍스트 안에서 동기적으로 시작. 거부는 아래 await에서 받되, 그 전에 다른 단계가 실패해도 미처리 거부가 남지 않게 한다.
   const audioReady = output.start().catch((e: unknown) => {
     throw new Error(`AUDIO: 소리를 켤 수 없습니다 (${e instanceof Error ? e.message : String(e)})`);
@@ -260,10 +279,14 @@ startBtn.addEventListener("click", async () => {
     message = "소리 켜는 중…";
     await withTimeout(audioReady, CONFIG.startup.audioMs, "소리 켜기");
     message = "손 추적 모델 불러오는 중…";
-    const delegate = await withTimeout(tracker.init(), CONFIG.startup.modelMs, "모델 로드");
+    const delegate = await withTimeout(tracker.init(isStale), CONFIG.startup.modelMs, "모델 로드");
+    if (state !== "STARTING") return; // 그 사이 ERROR로 바뀌었으면 중단
     message = "카메라 여는 중… (권한을 허용해 주세요)";
-    await withTimeout(openCamera(video, onCameraEnded), CONFIG.startup.cameraMs, "카메라 열기(권한 창에서 '허용'을 눌러야 합니다)");
+    await withTimeout(openCamera(video, onCameraEnded, isStale), CONFIG.startup.cameraMs, "카메라 열기(권한 창에서 '허용'을 눌러야 합니다)");
+    if (state !== "STARTING") return; // 카메라 트랙이 열리자마자 끊긴 경우 등
     resize();
+    resetHandState();
+    armed = true;
     message = null;
     lastVideoTime = -1;
     lastFrameAt = performance.now();
@@ -277,28 +300,31 @@ startBtn.addEventListener("click", async () => {
     }
   } catch (e) {
     console.error(e);
-    tracker.close();
+    if (state === "ERROR") return; // 카메라 ended 등으로 이미 ERROR 처리됨 — 먼저 나온 안내문 유지
     enterError(describeError(e));
   }
 });
 
 resetBtn.addEventListener("click", () => {
+  const wasActive = state === "READY" || state === "PLAYING";
   silence();
-  shownSector = null;
-  handView = null;
-  otherPalms = [];
-  prevPalmNorm = null;
-  hold.reset();
-  resetFilters();
-  sounding.reset();
-  outsideRest?.reset();
-  openPercent = 0;
-  armed = false;
-  if (state === "READY") showNotice("초기화됨 — 손을 내렸다 올리면 다시 소리가 납니다", 3000);
+  resetHandState();
+  // 연주 중/대기 중일 때만 '손을 뗄 때까지 무음'을 건다. IDLE·ERROR에서 누른 Reset이 다음 시작을 막지 않게 한다
+  armed = !wasActive;
+  if (wasActive) showNotice("초기화됨 — 손을 내렸다 올리면 다시 소리가 납니다", 3000);
 });
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) silence();
+});
+
+// 스트림 도중 해상도가 바뀌면(장치 전환 등) 캔버스·프레임 비율·쉼 원판 반지름을 다시 맞춘다
+video.addEventListener("resize", () => {
+  if (state !== "READY" && state !== "PLAYING") return;
+  if (canvas.width === video.videoWidth && canvas.height === video.videoHeight) return;
+  resize();
+  resetHandState();
+  silence();
 });
 
 // 오디오 컨텍스트가 멈추면(절전 복귀·출력 장치 전환) 안내하고, 다음 클릭/키에서 재개
@@ -336,11 +362,16 @@ function processFrame(now: number): void {
   otherPalms = sel.otherPalms.map((p) => ({ x: (1 - p.x) * W, y: p.y * H }));
   const hand = sel.chosen;
 
-  // 다른 손만 보일 때 안내 (1초 이상 지속, 5초에 한 번)
+  // 손은 보이는데 쓸 수 있는 오른손이 없을 때 안내 (1초 이상 지속, 5초에 한 번). 탈락 사유에 따라 문구를 나눈다
   if (!hand && sel.labels.length > 0) {
     otherOnlySince ??= now;
     if (now - otherOnlySince > CONFIG.notice.leftOnlyAfterMs && now - lastOtherNotice > CONFIG.notice.leftOnlyRepeatMs) {
-      showNotice("오른손이 보이지 않습니다(다른 손만 감지). 오른손을 들거나 '좌우 바꾸기'를 켜 보세요", 3000);
+      showNotice(
+        sel.rejectedWanted > 0
+          ? "오른손이 흐리거나 화면 가장자리에 걸쳐 있습니다. 손을 화면 안쪽으로 가져오세요"
+          : "오른손이 보이지 않습니다(다른 손만 감지). 오른손을 들거나 '좌우 바꾸기'를 켜 보세요",
+        3000,
+      );
       lastOtherNotice = now;
     }
   } else {
@@ -396,14 +427,8 @@ function processFrame(now: number): void {
 
   if (!present) {
     // 유예 500ms 초과: 완전히 놓는다
-    handView = null;
-    shownSector = null;
-    prevPalmNorm = null;
-    openPercent = 0;
+    resetHandState();
     armed = true;
-    resetFilters();
-    sounding.reset();
-    outsideRest?.reset();
     silence();
   }
   // 유예 시간 안이면 마지막 상태 유지
@@ -449,21 +474,20 @@ function loop(now: number): void {
         lastFrameAt = now;
         processFrame(now);
         frameTimes.push(now);
-      } else if (state === "PLAYING" && now - lastFrameAt > CONFIG.hold.lostGraceMs) {
-        // 워치독: 영상이 멈추면(트랙 종료·절전·다른 앱) 프레임 없이도 500ms 안에 끈다
-        handView = null;
-        shownSector = null;
+        consecutiveErrors = 0; // 프레임을 실제로 처리한 경우에만 초기화 (매 틱 초기화하면 30회 연속에 도달하지 못한다)
+      } else if (now - lastFrameAt > CONFIG.hold.lostGraceMs && (state === "PLAYING" || handView !== null || shownSector !== null)) {
+        // 워치독: 영상이 멈추면(트랙 종료·절전·다른 앱) 프레임 없이도 500ms 안에 소리를 끄고 표시를 지운다
+        const wasPlaying = state === "PLAYING";
+        resetHandState();
         silence();
-        showNotice("영상이 멈춰 소리를 껐습니다", 3000);
+        if (wasPlaying) showNotice("영상이 멈춰 소리를 껐습니다", 3000);
       }
     }
-    consecutiveErrors = 0;
   } catch (e) {
     consecutiveErrors++;
     console.error(e);
     silence();
     if (consecutiveErrors >= CONFIG.loop.maxConsecutiveErrors) {
-      tracker.close();
       enterError(`처리 중 오류가 반복됩니다.\n${describeError(e)}`);
     }
   }

@@ -21,12 +21,16 @@ export interface HandSelection {
   otherPalms: Point[];
   /** 디버그/안내용 라벨 "Right:0.96" */
   labels: string[];
+  /** 라벨은 맞지만 점수 미달·화면 밖이라 탈락한 '원하는 손'의 수 — 안내문 분기용 */
+  rejectedWanted: number;
 }
 export interface SelectOptions {
   swap: boolean;
   minScore: number;
   prevPalm: Point | null;
 }
+
+export const EMPTY_SELECTION: HandSelection = { chosen: null, otherPalms: [], labels: [], rejectedWanted: 0 };
 
 /**
  * handedness 라벨이 "Right"(swap이면 "Left")이고 점수가 충분하며 손바닥이 화면 안인 손을 고른다.
@@ -37,6 +41,7 @@ export function selectRightHand(result: HandsLike, opts: SelectOptions): HandSel
   const labels: string[] = [];
   const candidates: ChosenHand[] = [];
   const otherPalms: Point[] = [];
+  let rejectedWanted = 0;
 
   for (let i = 0; i < result.handedness.length; i++) {
     const cat = result.handedness[i]?.[0];
@@ -48,12 +53,13 @@ export function selectRightHand(result: HandsLike, opts: SelectOptions): HandSel
     if (cat.categoryName === wanted && cat.score >= opts.minScore && inside) {
       candidates.push({ landmarks: lm, score: cat.score, palm });
     } else {
+      if (cat.categoryName === wanted) rejectedWanted++;
       otherPalms.push(palm);
     }
   }
 
   const first = candidates[0];
-  if (!first) return { chosen: null, otherPalms, labels };
+  if (!first) return { chosen: null, otherPalms, labels, rejectedWanted };
   let chosen = first;
   if (candidates.length > 1) {
     const prev = opts.prevPalm;
@@ -62,5 +68,5 @@ export function selectRightHand(result: HandsLike, opts: SelectOptions): HandSel
       : candidates.reduce((a, b) => (b.score > a.score ? b : a));
     for (const c of candidates) if (c !== chosen) otherPalms.push(c.palm);
   }
-  return { chosen, otherPalms, labels };
+  return { chosen, otherPalms, labels, rejectedWanted };
 }

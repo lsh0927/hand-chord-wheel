@@ -33,3 +33,13 @@
    **적용 시점** mapping 테스트 수정 때
 
 (이후 버그를 만날 때마다 추가)
+
+7. **증상** 권한 창을 60초 넘게 두었다가 '허용'을 누르면 오류 화면 뒤에서 카메라 LED가 켜짐
+   **원인** withTimeout은 거부만 할 뿐 원래 Promise(getUserMedia·createFromOptions)를 취소하지 못함
+   **규칙** 시작 시도마다 세대 번호(startAttempt)를 매기고, openCamera/tracker.init은 isStale()이면 받은 자원을 즉시 닫고 CANCELLED로 실패한다. enterError는 세대 번호를 올리고 멱등이다
+   **적용 시점** 시작 절차(main.ts Start 핸들러, camera.ts, tracker.ts) 수정 때
+
+8. **증상** 루프 예외가 매 프레임 나도 ERROR 상태로 넘어가지 않음
+   **원인** 연속 오류 카운터를 requestAnimationFrame 매 틱에서 0으로 초기화해, 새 영상 프레임이 없는 틱(60Hz 중 절반)마다 리셋됨
+   **규칙** 카운터 초기화는 processFrame이 정상 완료된 직후에만
+   **적용 시점** main.ts loop() 수정 때

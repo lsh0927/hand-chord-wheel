@@ -24,11 +24,28 @@ describe("selectRightHand", () => {
     expect(r.labels).toEqual(["Left:0.90"]);
   });
   it("손이 없으면 전부 비어 있다", () => {
-    expect(selectRightHand({ landmarks: [], handedness: [] }, OPTS)).toEqual({ chosen: null, otherPalms: [], labels: [] });
+    expect(selectRightHand({ landmarks: [], handedness: [] }, OPTS)).toEqual({ chosen: null, otherPalms: [], labels: [], rejectedWanted: 0 });
   });
-  it("점수 0.7 미만은 무시", () => {
+  it("점수 0.7 미만은 무시하되 '원하는 손 탈락'으로 센다 (안내문 분기용)", () => {
     const r = selectRightHand({ landmarks: [lm(0.5)], handedness: [cat("Right", 0.55)] }, OPTS);
     expect(r.chosen).toBeNull();
+    expect(r.rejectedWanted).toBe(1);
+    expect(r.otherPalms).toHaveLength(1);
+  });
+  it("왼손만 보이면 rejectedWanted는 0 (다른 손 안내)", () => {
+    const r = selectRightHand({ landmarks: [lm(0.5)], handedness: [cat("Left", 0.95)] }, OPTS);
+    expect(r.rejectedWanted).toBe(0);
+  });
+  it("랜드마크가 21개 미만인 손은 라벨도 점도 남기지 않고 건너뛴다", () => {
+    const short = Array.from({ length: 10 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }));
+    const r = selectRightHand({ landmarks: [short], handedness: [cat("Right", 0.95)] }, OPTS);
+    expect(r).toEqual({ chosen: null, otherPalms: [], labels: [], rejectedWanted: 0 });
+  });
+  it("손바닥 중심이 화면 밖(y<0)이면 무시", () => {
+    const up = Array.from({ length: 21 }, () => ({ x: 0.5, y: -0.2, z: 0, visibility: 1 }));
+    const r = selectRightHand({ landmarks: [up], handedness: [cat("Right", 0.95)] }, OPTS);
+    expect(r.chosen).toBeNull();
+    expect(r.rejectedWanted).toBe(1);
   });
   it("손바닥 중심이 화면 밖(x>1)이면 무시", () => {
     const r = selectRightHand({ landmarks: [lm(1.2)], handedness: [cat("Right", 0.95)] }, OPTS);

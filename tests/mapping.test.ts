@@ -13,6 +13,7 @@ import {
   Hysteresis,
   type Landmarks,
 } from "../src/mapping";
+import { CONFIG } from "../src/config";
 
 const C = { x: 640, y: 360 }; // 1280x720 중심
 
@@ -89,6 +90,15 @@ describe("opennessPercent: CLOSED=0.8 → 0%, OPEN=1.7 → 100%", () => {
   it("0.5 → 0% (하한)", () => expect(opennessPercent(0.5, 0.8, 1.7)).toBe(0));
   it("2.0 → 100% (상한)", () => expect(opennessPercent(2.0, 0.8, 1.7)).toBe(100));
   it("open ≤ closed 잘못된 설정이면 0", () => expect(opennessPercent(1.0, 1.7, 0.8)).toBe(0));
+  it("경계값: 정확히 CLOSED면 0%, 정확히 OPEN이면 100%", () => {
+    expect(opennessPercent(0.8, 0.8, 1.7)).toBe(0);
+    expect(opennessPercent(1.7, 0.8, 1.7)).toBe(100);
+  });
+  it("합성 손을 CONFIG 보정값으로 변환하면 편 손 100%, 주먹 0% (설계 6장)", () => {
+    const { closedRatio, openRatio } = CONFIG.openness;
+    expect(opennessPercent(opennessRatio(syntheticHand(250)), closedRatio, openRatio)).toBe(100);
+    expect(opennessPercent(opennessRatio(syntheticHand(0)), closedRatio, openRatio)).toBe(0);
+  });
 });
 
 describe("isInRest", () => {
@@ -117,6 +127,12 @@ describe("HoldTracker: 손 소실 500ms 유예", () => {
     expect(h.update(true, 0)).toBe(true);
     expect(h.update(false, 400)).toBe(true);
     expect(h.update(false, 600)).toBe(false);
+  });
+  it("경계값: 정확히 500ms는 유지, 501ms는 해제", () => {
+    const h = new HoldTracker(500);
+    h.update(true, 0);
+    expect(h.update(false, 500)).toBe(true);
+    expect(h.update(false, 501)).toBe(false);
   });
   it("한 번도 본 적 없으면 false, lastSeenMs는 null", () => {
     const h = new HoldTracker(500);
@@ -153,10 +169,20 @@ describe("Hysteresis: 켜짐 enter 이상, 꺼짐 exit 미만", () => {
     expect(outside.update(55)).toBe(true); // 애매 구간은 유지
     expect(outside.update(50)).toBe(false);
   });
-  it("reset(초기값)", () => {
+  it("경계값: 정확히 20에서 켜지고, 정확히 15는 유지, 14.99에서 꺼진다", () => {
+    const s = new Hysteresis(20, 15);
+    expect(s.update(19.99)).toBe(false);
+    expect(s.update(20)).toBe(true);
+    expect(s.update(15)).toBe(true);
+    expect(s.update(14.99)).toBe(false);
+  });
+  it("reset(초기값): 기본 false, reset(true)면 켜진 상태로 시작", () => {
     const s = new Hysteresis(20, 15);
     s.update(30);
     s.reset();
     expect(s.active).toBe(false);
+    s.reset(true);
+    expect(s.active).toBe(true);
+    expect(s.update(16)).toBe(true);
   });
 });
