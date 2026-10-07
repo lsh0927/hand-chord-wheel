@@ -41,7 +41,9 @@ npm run verify   # 타입 검사 + 단위 테스트(81개) + 자산 확인 + 시
 ```
 
 ## 실측 기록
-- (첫 실행 때 기록: 날짜, handedness 라벨 결과와 '좌우 바꾸기' 필요 여부, 펼침 비율 closed/open 측정값 → `src/config.ts`의 `openness.closedRatio/openRatio`에 반영)
+- 2026-10-07, MacBook Pro 내장 카메라, 실내 조명, Chrome: 오른손 라벨 `Right:0.99` — '좌우 바꾸기' 불필요(기본값 false 유지).
+- 펼침 비율: 활짝 편 손 1.32, 꽉 쥔 주먹 0.53 → `openness.openRatio = 1.27`, `closedRatio = 0.58` (각 0.05 여유). 편 손 100%, 주먹 0%, 무음 경계 15%는 비율 0.68, 재개 20%는 0.72.
+- 처리 속도: GPU 모드. 좌상단에 '처리 N fps · 카메라 M fps'가 함께 표시된다(카메라 프레임마다 한 번만 처리).
 
 ## 2차 계획
 - Web MIDI → IAC Driver → GarageBand/Logic Pro 출력 (Chrome 전용)

@@ -38,7 +38,8 @@ export interface Scene {
   openPercent: number;
   level: number;
   muted: boolean;
-  fps: number;
+  fps: number; // 초당 처리한 카메라 프레임 수
+  cameraFps: number | null; // 카메라 트랙이 보고하는 프레임 수
   delegate: "GPU" | "CPU" | null;
   message: string | null; // 중앙 안내문
   notice: string | null; // 상단 짧은 알림
@@ -153,7 +154,8 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
   const slow = s.fps > 0 && s.fps < CONFIG.fps.warnBelow;
   ctx.fillStyle = slow ? "#ffd166" : "rgba(255,255,255,0.7)";
   const infoY = 16 + Math.round(H * 0.1) + 8;
-  ctx.fillText(`${s.fps.toFixed(0)} fps${s.delegate ? ` · ${s.delegate}` : ""}${slow ? " · 느림" : ""}`, 16, infoY);
+  const cam = s.cameraFps !== null ? ` · 카메라 ${s.cameraFps.toFixed(0)} fps` : "";
+  ctx.fillText(`처리 ${s.fps.toFixed(0)} fps${cam}${s.delegate ? ` · ${s.delegate}` : ""}${slow ? " · 느림" : ""}`, 16, infoY);
   if (s.debug) ctx.fillText(s.debug, 16, infoY + Math.round(H * 0.026));
 
   if (s.notice) {

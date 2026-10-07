@@ -48,15 +48,20 @@ describe("nextSector: 경계 ±3도 데드존", () => {
   it("팔레트가 줄어 이전 칸 번호가 범위를 벗어나면 새로 계산", () => expect(nextSector(11, 10, 6, 3)).toBe(0));
 });
 
-/** 합성 손(픽셀 좌표): 손목(640,648), 손바닥 뿌리 4개 y=504, 손끝 5개는 뿌리에서 tipDist만큼 위 */
-function syntheticHand(tipDist: number, scale = 1): Landmarks {
+/**
+ * 합성 손(픽셀 좌표): 손목(640,648), 손바닥 뿌리 4개 y=504, 손끝 5개는 뿌리에서 tipDist만큼 위(음수면 아래),
+ * spread는 손끝 가로 간격 배율(1 = 77 px). 주먹은 손끝이 손바닥 중심 쪽으로 모이므로 tipDist<0, spread 0.5로 만든다.
+ */
+function syntheticHand(tipDist: number, scale = 1, spread = 1): Landmarks {
   const lm: { x: number; y: number }[] = Array.from({ length: 21 }, () => ({ x: 640, y: 576 }));
   lm[0] = { x: 640, y: 648 };
   const mcpX = [512, 602, 678, 768];
   [5, 9, 13, 17].forEach((id, i) => (lm[id] = { x: mcpX[i]!, y: 504 }));
-  [4, 8, 12, 16, 20].forEach((id, i) => (lm[id] = { x: 486 + i * 77, y: 504 - tipDist }));
+  [4, 8, 12, 16, 20].forEach((id, i) => (lm[id] = { x: 640 + (i - 2) * 77 * spread, y: 504 - tipDist }));
   return lm.map((p) => ({ x: p.x * scale, y: p.y * scale }));
 }
+const OPEN_HAND = () => syntheticHand(250);
+const FIST = () => syntheticHand(-36, 1, 0.5);
 
 describe("palmCenter / distance", () => {
   it("합성 손의 손바닥 중심은 (640, 532.8)", () => {
@@ -68,11 +73,11 @@ describe("palmCenter / distance", () => {
 });
 
 describe("opennessRatio: 손 크기로 정규화한 손끝 거리", () => {
-  it("편 손은 OPEN 기준(1.7) 위, 주먹은 CLOSED 기준(0.8) 아래 (합성 손: 편 손 ≈2.0, 주먹 ≈0.68)", () => {
-    const open = opennessRatio(syntheticHand(250));
-    const fist = opennessRatio(syntheticHand(0));
-    expect(open).toBeGreaterThan(1.7);
-    expect(fist).toBeLessThan(0.8);
+  it("편 손은 실측 OPEN(1.27) 위, 주먹은 실측 CLOSED(0.58) 아래 (합성 손: 편 손 ≈2.0, 주먹 ≈0.32)", () => {
+    const open = opennessRatio(OPEN_HAND());
+    const fist = opennessRatio(FIST());
+    expect(open).toBeGreaterThan(1.27);
+    expect(fist).toBeLessThan(0.58);
     expect(open).toBeGreaterThan(fist * 2);
   });
   it("카메라 거리가 2배(좌표 ×0.5)여도 같은 값", () => {
@@ -96,8 +101,8 @@ describe("opennessPercent: CLOSED=0.8 → 0%, OPEN=1.7 → 100%", () => {
   });
   it("합성 손을 CONFIG 보정값으로 변환하면 편 손 100%, 주먹 0% (설계 6장)", () => {
     const { closedRatio, openRatio } = CONFIG.openness;
-    expect(opennessPercent(opennessRatio(syntheticHand(250)), closedRatio, openRatio)).toBe(100);
-    expect(opennessPercent(opennessRatio(syntheticHand(0)), closedRatio, openRatio)).toBe(0);
+    expect(opennessPercent(opennessRatio(OPEN_HAND()), closedRatio, openRatio)).toBe(100);
+    expect(opennessPercent(opennessRatio(FIST()), closedRatio, openRatio)).toBe(0);
   });
 });
 

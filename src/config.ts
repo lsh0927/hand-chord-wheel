@@ -8,8 +8,8 @@ export const CONFIG = {
   },
   sector: { deadZoneDeg: 3 },
   openness: {
-    closedRatio: 0.8, // ASSUMPTION — Task 11에서 실측 교정
-    openRatio: 1.7, // ASSUMPTION — Task 11에서 실측 교정
+    closedRatio: 0.58, // 실측 2026-10-07: 꽉 쥔 주먹 ratio 0.53 + 여유 0.05
+    openRatio: 1.27, // 실측 2026-10-07: 활짝 편 손 ratio 1.32 − 여유 0.05
     muteBelowPercent: 15, // 이 미만이면 무음으로 진입
     unmuteAbovePercent: 20, // 이 이상이어야 다시 소리 (히스테리시스)
   },

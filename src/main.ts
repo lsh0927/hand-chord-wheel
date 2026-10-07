@@ -73,6 +73,12 @@ let lastOtherNotice = -Infinity;
 let labelsForDebug: string[] = [];
 let paletteMsgTimer: number | null = null;
 let startAttempt = 0; // Start 시도 세대 번호. 타임아웃·재시도로 무효화된 시도의 늦은 결과를 버리는 데 쓴다
+let cameraFps: number | null = null;
+let vfcHandle: number | null = null;
+// MediaStream을 재생하는 video의 currentTime은 프레임 단위가 아니라 연속으로 증가하므로 rAF에서 currentTime 비교로는
+// 새 프레임을 골라낼 수 없다(디스플레이 120 Hz면 초당 100번 넘게 손 추적을 돌리게 된다). 카메라 프레임마다 정확히 한 번 부르는
+// requestVideoFrameCallback을 우선 쓰고, 없는 브라우저에서만 currentTime 비교로 대체한다.
+const hasVideoFrameCallback = typeof video.requestVideoFrameCallback === "function";
 const frameTimes: number[] = [];
 
 function setState(s: State): void {
@@ -246,6 +252,7 @@ function resize(): void {
 function enterError(text: string): void {
   if (state === "ERROR") return; // 멱등: 먼저 들어온 안내문을 유지한다
   startAttempt++; // 진행 중이던 시작 시도를 무효화 → 늦게 성공한 카메라/모델은 즉시 정리된다
+  cancelVideoFrame();
   silence();
   resetHandState();
   stopCamera(video);
@@ -291,7 +298,9 @@ startBtn.addEventListener("click", async () => {
     lastVideoTime = -1;
     lastFrameAt = performance.now();
     consecutiveErrors = 0;
+    cameraFps = readCameraFps();
     setState("READY");
+    scheduleVideoFrame();
     startBtn.textContent = "실행 중";
     if (delegate === "CPU") showNotice("GPU 모드 실패 → CPU 모드(느림, 약 107 ms/프레임)", 6000);
     if (!output.isRunning()) {
@@ -321,11 +330,18 @@ document.addEventListener("visibilitychange", () => {
 // 스트림 도중 해상도가 바뀌면(장치 전환 등) 캔버스·프레임 비율·쉼 원판 반지름을 다시 맞춘다
 video.addEventListener("resize", () => {
   if (state !== "READY" && state !== "PLAYING") return;
+  cameraFps = readCameraFps();
   if (canvas.width === video.videoWidth && canvas.height === video.videoHeight) return;
   resize();
   resetHandState();
   silence();
 });
+
+function readCameraFps(): number | null {
+  const stream = video.srcObject as MediaStream | null;
+  const fr = stream?.getVideoTracks()[0]?.getSettings().frameRate;
+  return typeof fr === "number" ? fr : null;
+}
 
 // 오디오 컨텍스트가 멈추면(절전 복귀·출력 장치 전환) 안내하고, 다음 클릭/키에서 재개
 output.onStateChange((running) => {
@@ -457,6 +473,7 @@ function draw(now: number): void {
     level,
     muted: state !== "PLAYING",
     fps: active ? fpsNow(now) : 0,
+    cameraFps: active ? cameraFps : null,
     delegate: active ? tracker.delegate : null,
     message,
     notice,
@@ -465,16 +482,50 @@ function draw(now: number): void {
   drawScene(ctx, scene);
 }
 
+/** 카메라 프레임 한 장 처리. 예외는 여기서 격리한다 — 1회면 소리만 끄고 계속, 연속 30회면 ERROR. */
+function handleFrame(now: number): void {
+  try {
+    lastFrameAt = now;
+    processFrame(now);
+    frameTimes.push(now);
+    consecutiveErrors = 0; // 프레임을 실제로 처리한 경우에만 초기화 (매 틱 초기화하면 30회 연속에 도달하지 못한다)
+  } catch (e) {
+    consecutiveErrors++;
+    console.error(e);
+    silence();
+    if (consecutiveErrors >= CONFIG.loop.maxConsecutiveErrors) {
+      enterError(`처리 중 오류가 반복됩니다.\n${describeError(e)}`);
+    }
+  }
+}
+
+function onVideoFrame(now: DOMHighResTimeStamp, _meta: VideoFrameCallbackMetadata): void {
+  vfcHandle = null;
+  if (state !== "READY" && state !== "PLAYING") return; // 체인 종료. 다음 시작 성공 때 다시 건다
+  handleFrame(now);
+  scheduleVideoFrame();
+}
+
+function scheduleVideoFrame(): void {
+  if (!hasVideoFrameCallback || vfcHandle !== null) return;
+  vfcHandle = video.requestVideoFrameCallback(onVideoFrame);
+}
+
+function cancelVideoFrame(): void {
+  if (vfcHandle !== null) {
+    video.cancelVideoFrameCallback(vfcHandle);
+    vfcHandle = null;
+  }
+}
+
 function loop(now: number): void {
   try {
     const active = state === "READY" || state === "PLAYING";
     if (active) {
-      if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+      if (!hasVideoFrameCallback && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+        // 대체 경로(requestVideoFrameCallback 없는 브라우저): currentTime이 바뀐 틱에만 처리
         lastVideoTime = video.currentTime;
-        lastFrameAt = now;
-        processFrame(now);
-        frameTimes.push(now);
-        consecutiveErrors = 0; // 프레임을 실제로 처리한 경우에만 초기화 (매 틱 초기화하면 30회 연속에 도달하지 못한다)
+        handleFrame(now);
       } else if (now - lastFrameAt > CONFIG.hold.lostGraceMs && (state === "PLAYING" || handView !== null || shownSector !== null)) {
         // 워치독: 영상이 멈추면(트랙 종료·절전·다른 앱) 프레임 없이도 500ms 안에 소리를 끄고 표시를 지운다
         const wasPlaying = state === "PLAYING";
@@ -484,12 +535,7 @@ function loop(now: number): void {
       }
     }
   } catch (e) {
-    consecutiveErrors++;
     console.error(e);
-    silence();
-    if (consecutiveErrors >= CONFIG.loop.maxConsecutiveErrors) {
-      enterError(`처리 중 오류가 반복됩니다.\n${describeError(e)}`);
-    }
   }
   try {
     draw(now);

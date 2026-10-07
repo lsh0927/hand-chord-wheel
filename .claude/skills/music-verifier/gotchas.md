@@ -43,3 +43,8 @@
    **원인** 연속 오류 카운터를 requestAnimationFrame 매 틱에서 0으로 초기화해, 새 영상 프레임이 없는 틱(60Hz 중 절반)마다 리셋됨
    **규칙** 카운터 초기화는 processFrame이 정상 완료된 직후에만
    **적용 시점** main.ts loop() 수정 때
+
+9. **증상** 좌상단 fps가 102처럼 카메라 프레임 수(30)보다 훨씬 크게 나오고 GPU를 불필요하게 많이 씀
+   **원인** MediaStream을 재생하는 video의 currentTime은 연속으로 증가해 rAF 틱마다 '새 프레임'으로 보임
+   **규칙** 카메라 프레임 처리는 video.requestVideoFrameCallback으로 건다(없을 때만 currentTime 비교로 대체)
+   **적용 시점** main.ts 프레임 루프 수정 때
