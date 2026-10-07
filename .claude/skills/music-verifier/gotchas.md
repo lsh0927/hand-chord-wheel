@@ -58,3 +58,13 @@
     **원인** port.onstatechange 단일 슬롯을 대입·null로 덮어씀
     **규칙** 포트 이벤트는 addEventListener/removeEventListener로 인스턴스별 등록, 등록은 open() 성공 뒤
     **적용 시점** midi.ts 수정 때
+
+12. **증상** MIDI 권한을 거부하면 출력 상자가 'MIDI 장치 찾기…'에 멈춰 재시도가 안 됨
+    **원인** 상자 재구성 생략(내용 같으면 return)이 선택값(DOM value) 복원까지 건너뜀. 같은 option 재선택은 change 이벤트를 내지 않음
+    **규칙** 재구성은 생략해도 `outputSelect.value`는 항상 목표값으로 맞춘다
+    **적용 시점** main.ts renderOutputOptions 수정 때
+
+13. **증상** 권한 창을 기다리는 동안 사용자가 다른 출력을 골랐는데 허용 뒤 자동 선택이 덮어씀 / 장애 복귀가 진행 중인 전환을 취소함
+    **원인** 비동기 대기 전후로 세대 번호(switchSeq)·진행 중 목표(switchingTo)를 비교하지 않음
+    **규칙** await 전에 seq를 잡고 뒤에 비교. 장애 복귀는 switchingTo가 있으면 현재 출력만 떼고 세대는 올리지 않는다
+    **적용 시점** main.ts requestMidiAndPick/restoreOutputPref/onMidiFailed 수정 때

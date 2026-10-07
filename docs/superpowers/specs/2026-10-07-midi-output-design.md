@@ -101,3 +101,18 @@
 | NOTE | 상자 재구성으로 드롭다운 닫힘, 전환 중 값 깜빡임 | 내용 같으면 생략, switchingTo 우선 |
 | NOTE | 비보안 주소 안내, 성공 알림의 GarageBand 힌트, open 실패 문구 접두어 | 반영 |
 | NOTE | Chrome 런타임 동작 미확인(끊긴 포트 send 예외, 제스처 없는 복원 요청, 탭 종료 시 패닉 전달) | Task 5 실측 항목 + gotchas 기록 |
+
+## 9. 코드 리뷰 반영 (2026-10-07)
+
+리뷰어 4명 + 발견마다 반박자 2명. 확정 7건(겹침 제외 5가지), 기각 8건.
+
+| 구분 | 내용 | 반영 |
+|---|---|---|
+| MAJOR | 권한 거부 뒤 상자가 '찾기…'에 멈추고 재시도 불가(재구성 생략이 선택값 복원까지 건너뜀) | 재구성은 생략해도 `select.value`는 항상 맞춤 |
+| MINOR | 현재 출력의 장애 복귀가 진행 중인 다른 포트 전환을 취소 | `onMidiFailed`: 전환 진행 중이면 현재 출력만 떼고 세대 유지 |
+| MINOR | 같은 포트 가드가 진행 중 목표를 모름 / 전환 중 원래 포트 재선택 무시 | `switchingTo` 비교, 원래 포트 재선택은 진행 중 전환 취소 |
+| MINOR | 권한 대기 중 사용자 선택을 자동 선택이 덮어씀 | `requestMidiAndPick`·`restoreOutputPref`가 대기 전후 세대 비교 |
+| MAJOR→MINOR | MidiOutput 브라우저 비의존 논리 테스트 없음 | `tests/midi-output.test.ts` 9건(가짜 포트): 시작·전환·stop·CC 중복 억제·패닉·dispose 멱등·연속 실패 5회·statechange 끊김 |
+| 기각 | DENIED 문구 일괄(설계 의도), open() 타임아웃(표준상 미해결 경로 없음), 비보안 컨텍스트 노출(명세 SecureContext), Playwright 테스트 저장소 부재(MCP로 실행, 커밋 대상 아님), loadOutputPref 순수 분리(동작 정확), chordChange 중복 음(입력 경로상 불가) | — |
+
+브라우저 확인(Playwright, 가짜 Web MIDI 주입): 상자 항목 구성, 찾기→자동 선택→선호 저장, Reset 패닉, tone 복귀 dispose 패닉, 새로고침 복원, 끊김 → 신디 복귀(선호 유지), 권한 거부 → 상자 tone 복귀·재시도 가능, 대기 중 사용자 선택 보존 — 모두 통과(2026-10-07).

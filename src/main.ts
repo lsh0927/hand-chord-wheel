@@ -247,33 +247,34 @@ function renderOutputOptions(): void {
     for (const p of ports) items.push([`midi:${p.id}`, `MIDI: ${p.name}`, false]);
   }
   const wanted = switchingTo ?? (midiOut ? `midi:${midiOut.portId}` : "tone");
+  const value = items.some(([v]) => v === wanted) ? wanted : "tone";
   const key = JSON.stringify([items, wanted]);
-  if (key === lastOptionsKey) return;
-  lastOptionsKey = key;
-  outputSelect.innerHTML = "";
-  for (const [value, text, disabled] of items) {
-    const o = document.createElement("option");
-    o.value = value;
-    o.textContent = text;
-    o.disabled = disabled;
-    outputSelect.appendChild(o);
+  if (key !== lastOptionsKey) {
+    lastOptionsKey = key;
+    outputSelect.innerHTML = "";
+    for (const [v, text, disabled] of items) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = text;
+      o.disabled = disabled;
+      outputSelect.appendChild(o);
+    }
   }
-  outputSelect.value = items.some(([v]) => v === wanted) ? wanted : "tone";
+  // 항목 재구성을 생략해도 선택값은 항상 맞춘다(권한 거부 뒤 상자가 '찾기…'에 멈추지 않게)
+  if (outputSelect.value !== value) outputSelect.value = value;
 }
 
-/** 브라우저 신디로. persist=false는 장애 복귀(사용자 선택을 덮어쓰지 않는다) */
-function switchToTone(reason?: string, persist = true): void {
-  switchSeq++;
-  switchingTo = null;
-  silence();
+/** 현재 MIDI 출력을 떼고 Tone 출력으로 되돌린다(세대·저장값은 건드리지 않음) */
+function dropMidiOutput(): void {
   if (midiOut) {
     midiOut.dispose();
     midiOut = null;
   }
   output = toneOutput;
-  if (persist) saveOutputPref({ kind: "tone" });
-  renderOutputOptions();
-  showNotice(reason ? `${reason} → 브라우저 신디로 전환` : "출력: 브라우저 신디", reason ? 6000 : 2500);
+}
+
+/** Tone 컨텍스트가 멈춰 있으면(제스처 밖 복귀 등) 안내 */
+function ensureToneRunning(): void {
   void toneOutput
     .start()
     .then(() => {
@@ -283,8 +284,42 @@ function switchToTone(reason?: string, persist = true): void {
     .catch(() => {});
 }
 
+/** 브라우저 신디로. persist=false는 장애 복귀(사용자 선택을 덮어쓰지 않는다) */
+function switchToTone(reason?: string, persist = true): void {
+  switchSeq++;
+  switchingTo = null;
+  silence();
+  dropMidiOutput();
+  if (persist) saveOutputPref({ kind: "tone" });
+  renderOutputOptions();
+  showNotice(reason ? `${reason} → 브라우저 신디로 전환` : "출력: 브라우저 신디", reason ? 6000 : 2500);
+  ensureToneRunning();
+}
+
+/** 현재 MIDI 출력의 끊김·반복 실패. 다른 포트로 전환이 진행 중이면 그 전환을 살려 두고 현재 출력만 뗀다 */
+function onMidiFailed(reason: string): void {
+  if (switchingTo !== null) {
+    silence();
+    dropMidiOutput();
+    renderOutputOptions();
+    showNotice(`${reason} → 브라우저 신디로 전환`, 6000);
+    ensureToneRunning();
+    return;
+  }
+  switchToTone(reason, false);
+}
+
 async function switchToMidi(id: string): Promise<void> {
-  if (midiOut && midiOut.portId === id) return; // 같은 포트 재선택
+  if (switchingTo === `midi:${id}`) return; // 이미 그 포트로 전환 중
+  if (midiOut && midiOut.portId === id) {
+    // 현재 포트 유지. 다른 포트로 전환이 진행 중이었다면 그 전환을 취소한다
+    if (switchingTo !== null) {
+      switchSeq++;
+      switchingTo = null;
+      renderOutputOptions();
+    }
+    return;
+  }
   const port = midi.getOutput(id);
   if (!port) {
     showNotice("선택한 MIDI 포트를 찾지 못했습니다(연결 끊김?)", 4000);
@@ -295,7 +330,7 @@ async function switchToMidi(id: string): Promise<void> {
   switchingTo = `midi:${id}`;
   renderOutputOptions();
   const next = new MidiOutput(port, (reason) => {
-    if (midiOut === next) switchToTone(reason, false); // 현재 출력이 아닌 인스턴스의 실패는 무시
+    if (midiOut === next) onMidiFailed(reason); // 현재 출력이 아닌 인스턴스의 실패는 무시
   });
   try {
     await next.start();
@@ -328,6 +363,7 @@ async function switchToMidi(id: string): Promise<void> {
 }
 
 async function requestMidiAndPick(): Promise<void> {
+  const seq = switchSeq;
   try {
     await midi.request();
   } catch (e) {
@@ -335,8 +371,9 @@ async function requestMidiAndPick(): Promise<void> {
     renderOutputOptions();
     return;
   }
-  const ports = midi.outputs();
   renderOutputOptions();
+  if (seq !== switchSeq) return; // 기다리는 동안 사용자가 다른 출력을 골랐다 — 자동 선택하지 않는다
+  const ports = midi.outputs();
   const only = ports[0];
   if (ports.length === 1 && only) {
     await switchToMidi(only.id);
@@ -352,12 +389,17 @@ async function requestMidiAndPick(): Promise<void> {
 async function restoreOutputPref(): Promise<void> {
   const pref = loadOutputPref();
   if (!pref || pref.kind !== "midi" || !isWebMidiSupported()) return;
+  const seq = switchSeq;
   try {
     await midi.request();
   } catch {
     showNotice(`저장된 MIDI 출력 '${pref.name}'을 복원하지 못해 브라우저 신디로 시작합니다`, 6000);
     renderOutputOptions();
     return;
+  }
+  if (seq !== switchSeq) {
+    renderOutputOptions();
+    return; // 복원 중 사용자가 직접 골랐다
   }
   const byName = midi.findByName(pref.name);
   const target = midi.findById(pref.id) ?? (byName.length === 1 ? byName[0] : null) ?? null;
