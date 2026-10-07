@@ -3,6 +3,7 @@
 | 변경 파일 | 영향 | 자동 검증 | 수동 확인 |
 |---|---|---|---|
 | src/mapping.ts | 코드 선택, 펼침%, 히스테리시스, 유지 규칙 | tests/mapping.test.ts | 경계 깜빡임, 주먹 무음/재개 |
+| src/fingers.ts | 손가락 판정·개수·안정화·높이 | tests/fingers.test.ts | 1~5 전환, 엄지 오판, 손 재진입 첫 코드 |
 | src/chords.ts | 팔레트, 표기 정규화, MIDI 번호 | tests/chords.test.ts | 12개 코드 소리 |
 | src/hands.ts | 오른손 선택 | tests/hands.test.ts | 두 손 동시 노출, 왼손만 노출 안내 |
 | src/audio.ts, src/output.ts | 소리, 컨텍스트 상태 | tsc | 코드 전환 시 끊김/겹침, 절전 복귀 |

@@ -61,6 +61,24 @@ export const CONFIG = {
     max: 16,
     storageKey: "hcw.palette.v1",
   },
+  select: {
+    defaultMode: "fingers", // "fingers" | "wheel"
+    modeStorageKey: "hcw.mode.v1",
+  },
+  fingers: {
+    extendRatio: 1.15, // 즉시 판정(디버그·테스트용): 끝-손목 > PIP-손목 × 비율
+    thumbRatio: 1.1, // 즉시 판정(디버그·테스트용): 엄지 끝-소지뿌리 > IP-소지뿌리 × 비율
+    enterRatio: 1.2, // 히스테리시스: 이 이상이면 펴짐으로 진입 (ASSUMPTION, 실측 교정)
+    exitRatio: 1.1, // 이 미만이면 접힘으로 해제
+    thumbEnterRatio: 1.18, // 엄지 진입 (검지 옆에 곧게 붙인 자세 ≈1.107은 들어오지 않게)
+    thumbExitRatio: 1.05, // 엄지 해제
+    holdMs: 120, // 개수가 이 시간 유지되어야 확정
+    heightTopLine: 0.25, // 이 높이(영상 높이 비율)에서 100%
+    heightBottomLine: 0.85, // 이 높이에서 하한
+    minPercent: 10, // 높이 음량 하한(바닥에서도 작은 소리로 남긴다)
+    levelExponent: 1.5, // 음량 곡선 지수 (실측 때 1/1.5/2 비교)
+    frameMargin: 0.05, // 손목·뿌리 관절이 정규화 좌표 [-m, 1+m] 밖이면 판정 보류
+  },
   midi: {
     channel: 1, // 1~16
     velocity: 100,

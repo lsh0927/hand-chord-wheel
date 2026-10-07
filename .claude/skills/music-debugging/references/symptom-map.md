@@ -11,7 +11,11 @@
 | 코드가 경계에서 깜빡임 | 데드존 작음 / 필터 꺼짐 | config.sector.deadZoneDeg, smoothing.alpha | 데드존 3→5도, alpha 0.5→0.35 |
 | 쉼 원판/주먹 경계에서 따다닥 재어택 | 히스테리시스 간격 부족 | config.wheel.restExitFactor, openness.unmuteAbovePercent | 1.3→1.5, 20→25 |
 | 주먹 쥐어도 소리 안 멈춤 | closed/open 보정값이 사용자 손과 안 맞음 | `?debug=1` ratio 읽기 | Task 11 절차로 재실측 |
-| Reset 뒤 소리가 안 남 | Reset 대기(armed=false) 상태 — 의도된 동작 | `?debug=1`에 "(Reset 대기)" | 손을 내렸다 올리거나 쉼 원판을 지나기 |
+| Reset 뒤 소리가 안 남 | Reset 대기(armed=false) 상태 — 의도된 동작 | `?debug=1`에 "(Reset 대기)" | 손을 내렸다 올리기; 휠 모드는 쉼 원판 지나기, 손가락 모드는 주먹 쥐었다 펴기 |
+| 손가락 모드: 편하게 늘어뜨린 손이 4로 읽힘 / 3↔4 흔들림 | 펴짐 비율 경계(약 72도 굽힘) 근처 | `?debug=1`의 `t I M r p`·raw/stable | config.fingers.enterRatio 1.2→1.25, exitRatio 1.1→1.15 |
+| 손가락 모드: 활짝 폈는데 4 | 엄지가 검지 옆에 붙었거나 카메라 쪽으로 기울어짐 | 디버그 `t` 소문자 | 엄지를 옆으로 벌리기; thumbEnterRatio 1.18→1.12 |
+| 손가락 모드: 손을 들어 올리면 소리가 끊김 | 손목이 화면 밖 → 판정 보류/주먹을 트래커가 놓침 | 디버그 "판정 보류"/"no hand" | 손목이 보이는 높이까지만; 카메라를 조금 뒤로 |
+| 손가락 모드: 배지는 파란데 소리가 거의 없음 | 손이 바닥 선 근처(높이 10% 하한) | HUD R HEIGHT | 손을 올리기; levelExponent 1.5→1 |
 | fps 15 미만 | CPU 모드 폴백 / 다른 탭·앱 GPU 점유 | 좌상단 `CPU` 표시 | 콘솔 GPU 실패 원인 확인; 해상도 1280→960 |
 | 코드 전환 시 음이 빠짐 | maxPolyphony가 32 미만으로 바뀜 | 콘솔 "Max polyphony exceeded" | config.audio.maxPolyphony 32 |
 | 영상이 멈추고 "영상이 멈춰 소리를 껐습니다" | 카메라 프레임 정지(절전·다른 앱) | 카메라 LED, 다른 앱 | 다른 앱 종료 후 '다시 시도' 또는 새로고침 |

@@ -68,3 +68,23 @@
     **원인** 비동기 대기 전후로 세대 번호(switchSeq)·진행 중 목표(switchingTo)를 비교하지 않음
     **규칙** await 전에 seq를 잡고 뒤에 비교. 장애 복귀는 switchingTo가 있으면 현재 출력만 떼고 세대는 올리지 않는다
     **적용 시점** main.ts requestMidiAndPick/restoreOutputPref/onMidiFailed 수정 때
+
+14. **증상** 손가락 모드에서 편하게 늘어뜨린 손이 "4"로 읽히거나 경계에서 코드가 반복 재타격됨
+    **원인** 단일 임계(1.15)에는 여유가 없다(곧게 1.35, 45° 굽힘 1.27, 75° 1.14) + 떨림 ±0.02
+    **규칙** 손가락별 히스테리시스(진입 1.20/해제 1.10, 엄지 1.18/1.05) + 120 ms 안정화. 엄지는 넷 다 펴졌을 때만 센다
+    **적용 시점** fingers.ts·config.fingers 수정 때
+
+15. **증상** 계획의 StableValue 테스트가 구현과 모순(후보 시작 50 ms인데 120 ms에 바뀐다고 기대)
+    **원인** 유지 시간은 '후보가 바뀐 시점'부터 센다
+    **규칙** 테스트 시각은 후보 시작 + holdMs로 계산한다
+    **적용 시점** 안정화 로직 테스트 작성 때
+
+16. **증상** 손가락 모드에서 손목이 화면 밖인 채로 Reset 직후 소리가 바로 남 / 공백 뒤 스친 값이 즉시 확정됨
+    **원인** 확정값 null을 0(주먹)으로 취급해 재무장 · StableValue가 update 공백을 유지 시간에 합산
+    **규칙** null과 0을 구분한다. StableValue는 공백이 holdMs를 넘으면 후보 타이머를 재시작한다
+    **적용 시점** fingers.ts StableValue·main.ts processFingerFrame 수정 때
+
+17. **증상** MIDI CC11이 손 높이에 비례하지 않음
+    **원인** level 곡선 지수(1.5)와 levelToCc의 제곱 복원 전제 불일치
+    **규칙** setLevel(level, control)로 선형 제어값을 함께 넘기고 MIDI는 control을 쓴다
+    **적용 시점** 음량 곡선·출력 인터페이스 수정 때

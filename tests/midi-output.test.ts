@@ -92,6 +92,17 @@ describe("MidiOutput.setLevel: CC11 중복 억제", () => {
     out.setLevel(1);
     expect(f.log).toHaveLength(3);
   });
+  it("선형 제어값(control)이 있으면 그에 비례: 높이 58% → 74, level 곡선과 무관", async () => {
+    const f = fakePort();
+    const out = new MidiOutput(f.port, vi.fn());
+    await out.start();
+    out.setLevel(0.58 ** 1.5, 0.58);
+    expect(f.log.at(-1)).toEqual([0xb0 | CH, 11, 74]);
+    out.setLevel(0.1, 1.0);
+    expect(f.log.at(-1)).toEqual([0xb0 | CH, 11, 127]);
+    out.setLevel(0.9, -0.5); // 범위 밖은 클램프
+    expect(f.log.at(-1)).toEqual([0xb0 | CH, 11, 0]);
+  });
 });
 
 describe("MidiOutput 패닉·dispose", () => {

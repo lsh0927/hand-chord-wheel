@@ -19,6 +19,7 @@ import {
   type Point,
 } from "./mapping";
 import { drawScene, wheelGeometry, WHEEL_ANCHORS, type Scene, type HandView, type WheelAnchor } from "./overlay";
+import { FingerDetector, fingerCount, fingerFlags, heightPercent, StableValue } from "./fingers";
 
 type State = "IDLE" | "STARTING" | "READY" | "PLAYING" | "ERROR";
 
@@ -48,6 +49,13 @@ const midi = new MidiManager();
 const outputSelect = $<HTMLSelectElement>("output");
 const wheelPosSelect = $<HTMLSelectElement>("wheelpos");
 let wheelAnchor: WheelAnchor = CONFIG.wheel.defaultAnchor;
+type SelectMode = "wheel" | "fingers";
+const modeSelect = $<HTMLSelectElement>("mode");
+let selectMode: SelectMode = CONFIG.select.defaultMode;
+const fingerStable = new StableValue(CONFIG.fingers.holdMs);
+const fingerDetector = new FingerDetector();
+let rawFingerCount: number | null = null;
+let fingerDebug = "";
 let switchSeq = 0; // 출력 전환 세대. 늦게 끝난 전환은 버린다
 let switchingTo: string | null = null; // 전환 진행 중 상자에 보여 줄 값
 let lastOptionsKey = ""; // 상자 재구성 생략용
@@ -120,6 +128,10 @@ function resetHandState(): void {
   resetFilters();
   sounding.reset();
   outsideRest?.reset();
+  fingerStable.reset();
+  fingerDetector.reset();
+  rawFingerCount = null;
+  fingerDebug = "";
 }
 
 /** 소리를 멈추고 READY로. 표시 칸은 호출자가 정한다. */
@@ -418,6 +430,43 @@ outputSelect.addEventListener("change", () => {
 });
 midi.onChange(() => renderOutputOptions());
 
+// ── 선택 방식 ────────────────────────────────────────────
+function isSelectMode(v: string): v is SelectMode {
+  return v === "wheel" || v === "fingers";
+}
+
+function applyMode(m: SelectMode): void {
+  selectMode = m;
+  modeSelect.value = m;
+  shownSector = null;
+  fingerStable.reset();
+  fingerDetector.reset();
+  sounding.reset();
+  outsideRest?.reset();
+  silence();
+}
+
+function loadMode(): void {
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(CONFIG.select.modeStorageKey);
+  } catch {
+    saved = null;
+  }
+  applyMode(saved && isSelectMode(saved) ? saved : CONFIG.select.defaultMode);
+}
+
+modeSelect.addEventListener("change", () => {
+  const v = modeSelect.value;
+  if (!isSelectMode(v)) return;
+  applyMode(v);
+  try {
+    localStorage.setItem(CONFIG.select.modeStorageKey, v);
+  } catch {
+    /* 무시 */
+  }
+});
+
 // ── 휠 위치 ─────────────────────────────────────────────
 function isWheelAnchor(v: string): v is WheelAnchor {
   return (WHEEL_ANCHORS as readonly string[]).includes(v);
@@ -580,7 +629,12 @@ resetBtn.addEventListener("click", () => {
   resetHandState();
   // 연주 중/대기 중일 때만 '손을 뗄 때까지 무음'을 건다. IDLE·ERROR에서 누른 Reset이 다음 시작을 막지 않게 한다
   armed = !wasActive;
-  if (wasActive) showNotice("초기화됨 — 손을 내렸다 올리면 다시 소리가 납니다", 3000);
+  if (wasActive) {
+    showNotice(
+      selectMode === "fingers" ? "초기화됨 — 주먹을 쥐었다 펴거나 손을 내렸다 올리면 다시 소리가 납니다" : "초기화됨 — 손을 내렸다 올리면 다시 소리가 납니다",
+      3000,
+    );
+  }
 });
 
 document.addEventListener("visibilitychange", () => {
@@ -667,7 +721,10 @@ function processFrame(now: number): void {
 
   if (hand) {
     // 잠깐(≤100ms) 끊긴 건 연속으로 보고, 더 길게 사라졌다 나타나면 필터를 초기화해 이전 위치에서 끌려오지 않게 한다
-    if (prevSeen !== null && now - prevSeen > CONFIG.smoothing.resetAfterGapMs) resetFilters();
+    if (prevSeen !== null && now - prevSeen > CONFIG.smoothing.resetAfterGapMs) {
+      resetFilters();
+      fingerDetector.reset(); // 공백 뒤 손가락 펴짐 판정도 새로 시작(안정화 타이머는 StableValue가 공백을 제외한다)
+    }
     prevPalmNorm = hand.palm;
 
     // 거울 표시 좌표(픽셀)로 변환: x → (1 - x). 펼침 비율도 이 등방 좌표로 계산한다
@@ -678,6 +735,17 @@ function processFrame(now: number): void {
     lastRatio = ratio;
     openPercent = opennessPercent(ratio, CONFIG.openness.closedRatio, CONFIG.openness.openRatio);
     handView = { palm, tips: TIP_IDS.map((i) => pts[i] ?? palm) };
+
+    if (selectMode === "fingers") {
+      // 손목·네 뿌리 관절이 화면 밖이면 외삽 좌표라 판정을 보류한다
+      const m = CONFIG.fingers.frameMargin;
+      const inFrame = [0, 5, 9, 13, 17].every((i) => {
+        const l = hand.landmarks[i];
+        return !!l && l.x >= -m && l.x <= 1 + m && l.y >= -m && l.y <= 1 + m;
+      });
+      processFingerFrame(pts, palm, H, now, inFrame);
+      return;
+    }
 
     const isOutside = outsideRest ? outsideRest.update(distance(center, palm)) : true;
     if (!isOutside) {
@@ -710,7 +778,7 @@ function processFrame(now: number): void {
       setState("PLAYING");
     }
     level = (openPercent / 100) ** 2;
-    output.setLevel(level);
+    output.setLevel(level, openPercent / 100);
     return;
   }
 
@@ -721,6 +789,61 @@ function processFrame(now: number): void {
     silence();
   }
   // 유예 시간 안이면 마지막 상태 유지
+}
+
+/** 손가락 모드: 펴진 손가락 수로 코드, 손 높이로 음량 */
+function processFingerFrame(pts: Point[], palm: Point, H: number, now: number, inFrame: boolean): void {
+  openPercent = Math.max(CONFIG.fingers.minPercent, heightPercent(palm.y, H));
+  if (inFrame) {
+    const states = fingerDetector.update(pts);
+    const raw = fingerCount(states);
+    rawFingerCount = raw;
+    fingerDebug = fingerFlags(states);
+    fingerStable.update(raw, now);
+  } else {
+    fingerDebug = "손목·뿌리 화면 밖 — 판정 보류";
+  }
+  const stable = fingerStable.value;
+  if (stable === null) {
+    // 아직 확정된 적이 없는데 판정 보류 중(손목이 화면 밖) — Reset 대기(armed)를 건드리지 않는다
+    silence();
+    return;
+  }
+  if (stable === 0) {
+    shownSector = null;
+    armed = true; // 주먹 = 쉼이자 재무장
+    silence();
+    return;
+  }
+  const sector = stable - 1;
+  if (sector >= palette.length) {
+    // palette.min이 6이라 현재는 도달하지 않는 방어 분기
+    shownSector = null;
+    silence();
+    return;
+  }
+  shownSector = sector;
+  if (!armed) {
+    silence();
+    return;
+  }
+  const midi = midiByIndex[sector] ?? [];
+  if (midi.length === 0) {
+    silence();
+    return;
+  }
+  if (state !== "PLAYING" || sector !== currentSector) {
+    const out = output;
+    out.play(midi);
+    if (output !== out) {
+      silence();
+      return;
+    }
+    currentSector = sector;
+    setState("PLAYING");
+  }
+  level = (openPercent / 100) ** CONFIG.fingers.levelExponent;
+  output.setLevel(level, openPercent / 100);
 }
 
 function fpsNow(now: number): number {
@@ -744,15 +867,21 @@ function draw(now: number): void {
     otherPalms,
     openPercent,
     level,
-    muted: state !== "PLAYING",
+    muted: state !== "PLAYING" || level < 0.02, // 바닥 근처의 사실상 무음도 연하게 표시
     fps: active ? fpsNow(now) : 0,
     cameraFps: active ? cameraFps : null,
     delegate: active ? tracker.delegate : null,
     outputName: outputLabel(),
     anchor: wheelAnchor,
+    mode: selectMode,
+    fingerCount: selectMode === "fingers" ? rawFingerCount : null,
     message,
     notice,
-    debug: debug ? `ratio ${lastRatio.toFixed(2)} | ${labelsForDebug.join(" ") || "no hand"} | ${state}${armed ? "" : " (Reset 대기)"}` : null,
+    debug: debug
+      ? `${selectMode === "fingers" ? `h ${openPercent.toFixed(0)}%` : `ratio ${lastRatio.toFixed(2)}`} | ${labelsForDebug.join(" ") || "no hand"} | ${state}${armed ? "" : " (Reset 대기)"}${
+          selectMode === "fingers" ? ` | ${fingerDebug || "-"} raw ${rawFingerCount ?? "-"} stable ${fingerStable.value ?? "-"}` : ""
+        }`
+      : null,
   };
   drawScene(ctx, scene);
 }
@@ -825,6 +954,7 @@ resize();
 loadPalette();
 loadSwap();
 loadWheelAnchor();
+loadMode();
 renderOutputOptions();
 void restoreOutputPref();
 try {

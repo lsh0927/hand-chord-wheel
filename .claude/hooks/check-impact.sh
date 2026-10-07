@@ -11,6 +11,7 @@ except Exception:
 ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 REL="${FILE#"$ROOT"/}"
 case "$REL" in
+  src/fingers.ts) echo "[impact] fingers.ts → 손가락 판정·개수·안정화·높이. tests/fingers.test.ts 실행, ?debug=1로 1~5 전환·엄지 오판 실측" ;;
   src/mapping.ts) echo "[impact] mapping.ts → 코드 선택(각도·데드존)·펼침%·히스테리시스·유지 규칙 전부. tests/mapping.test.ts 실행, 칸 경계·쉼 원판·15/20% 경계 깜빡임 수동 확인" ;;
   src/chords.ts) echo "[impact] chords.ts → 팔레트 파싱·표기 정규화·MIDI 번호. tests/chords.test.ts 실행, 12개 기본 코드 소리 확인" ;;
   src/hands.ts) echo "[impact] hands.ts → 오른손 선택(점수·화면 안·연속성). tests/hands.test.ts 실행, 두 손 동시 노출 수동 확인" ;;
