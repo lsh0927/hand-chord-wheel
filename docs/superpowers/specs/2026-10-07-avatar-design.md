@@ -37,26 +37,29 @@
 ### 3-1. 얼굴 추적
 - `FaceLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: "/models/face_landmarker.task", delegate }, runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true })`. 손 모델과 같은 wasm 파일셋을 쓴다.
 - `detectForVideo(video, ts)` 결과에서 `faceBlendshapes[0].categories[]`(categoryName, score)를 이름→값 사전으로, `facialTransformationMatrixes[0].data`(16개, 열 우선)를 그대로 넘긴다. 얼굴이 없으면 null.
-- 실행 간격: `face.everyNFrames = 1`(매 프레임). 느리면 2로.
+- 실행 간격: 기본 매 프레임. 얼굴 모델이 CPU 폴백이거나 처리 fps가 3초 넘게 20 아래면 2프레임마다(알림 1회).
+- **로드는 시작을 막지 않는다**: 손 모델 뒤에 await 없이 시작해 카메라 권한 대기와 겹치고, 실패·취소는 알림만. 모델 파일이 없으면(선택 자산) 얼굴 없이 시작. 영상 모드면 로드하지 않고 아바타 모드로 바꿀 때 시작.
+- **격리**: 얼굴 추적·아바타 렌더는 손 처리와 별도 try/catch. 연속 10회 예외면 그 기능만 끄고 알림.
 - 손 모델처럼 세대 번호(isStale)로 늦은 로드를 버리고, 실패 시 CPU로 재시도한다.
 
 ### 3-2. 표정 매핑 (순수, `avatar-map.ts`)
 - 입력: ARKit 이름 사전(예 `jawOpen`, `eyeBlinkLeft`, `mouthSmileLeft`, `browInnerUp`, `browDownLeft`, `mouthFunnel`, `mouthPucker`). 없는 이름은 0.
-- 출력(VRM 프리셋): `aa = jawOpen`, `oh = mouthFunnel`, `ou = mouthPucker`, `ee = (mouthStretchLeft+mouthStretchRight)/2`, `blinkLeft/blinkRight = eyeBlink*`, `happy = (mouthSmileLeft+mouthSmileRight)/2 × 1.2`, `angry = (browDownLeft+browDownRight)/2`, `surprised = browInnerUp × eyeWide평균(없으면 browInnerUp)`. 전부 0~1 클램프. 배율·조합은 config 표로 두어 실측 때 조정.
+- 출력(VRM 프리셋): `aa = jawOpen`, `oh = mouthFunnel`, `ou = mouthPucker`, `ee = (mouthStretchLeft+mouthStretchRight)/2`, `blinkLeft/blinkRight = eyeBlink*`, `happy = (mouthSmileLeft+mouthSmileRight)/2 × 1.2`, `angry = (browDownLeft+browDownRight)/2`, `surprised = (browInnerUp + eyeWide 평균) / 2`. 전부 0~1 클램프. 배율·조합은 config 표로 두어 실측 때 조정.
 - **거울 교환**: 화면이 거울이므로 `mirror = true`일 때 Left↔Right를 바꿔 넣는다(내가 왼눈을 감으면 화면 왼쪽, 즉 아바타의 오른눈이 감긴다).
-- 1차 저역 필터(α 0.5)로 떨림 완화. 깜빡임은 빠르므로 α 0.8.
+- 1차 저역 필터(α 0.5)로 떨림 완화. 깜빡임은 빠르므로 α 0.8. 얼굴이 300 ms 넘게 안 잡히면 중립으로 완화(그 안은 마지막 값 유지, `HoldTracker` 재사용).
 
 ### 3-3. 머리 회전
-- 행렬 → `THREE.Matrix4.fromArray(data)` → 회전 성분 → 오일러(YXZ). 거울이면 yaw·roll 부호 반전. 축 부호는 config `headAxisSign {x,y,z}`(기본 1, −1, −1 — ASSUMPTION, 첫날 실측으로 확정). pitch·yaw ±35°, roll ±25° 클램프. 저역 필터 α 0.4.
-- `vrm.humanoid.getNormalizedBoneNode("head")`에 적용. 얼굴이 사라지면 0.5초에 걸쳐 정면으로 복귀.
+- 행렬 → `THREE.Matrix4.fromArray(data)` → 회전 성분 → 오일러(YXZ). 거울이면 yaw·roll 부호 반전. 축 부호는 config `headAxisSign {x,y,z}`(기본 1, 1, 1 — ASSUMPTION: MediaPipe 카메라 좌표계 X 오른쪽·Y 위·Z 카메라 쪽이 three.js와 같다. 거울 반전은 `mirror`만 담당. 첫날 실측으로 확정). VRM 0.x 모델은 `rotateVRM0`로 180° 돌려 두므로 pitch·roll 부호를 뒤집는다. pitch·yaw ±35°, roll ±25° 클램프. 저역 필터 α 0.4.
+- `vrm.humanoid.getNormalizedBoneNode("head")`에 적용. 얼굴이 300 ms 넘게 사라지면 Ema로 정면 복귀. 행렬에 NaN이 섞이면 0으로 취급(Ema가 NaN으로 굳지 않게).
 - 머리 위치(평행이동)는 쓰지 않는다(아바타는 화면 고정).
 
 ### 3-4. 렌더링
 - `<canvas id="avatar">`: WebGLRenderer(alpha: true, antialias). 크기 = 프레임 CSS 크기 × devicePixelRatio(최대 2). 비디오 위, 오버레이 아래.
 - 카메라: Perspective fov 30°, 위치 (0, 1.35, 1.7) → (0, 1.35, 0) 응시(가슴 위). config로 조정. 조명: 반구광 + 방향광.
 - 배경: `#frame`의 CSS 그라데이션(영상이 숨겨질 때 보임).
-- VRM 로드: GLTFLoader + `register(parser => new VRMLoaderPlugin(parser))`, `gltf.userData.vrm`. `VRMUtils.removeUnnecessaryVertices`, `combineSkeletons`, VRM0이면 `rotateVRM0`. 매 프레임 `vrm.update(delta)` 후 render.
+- VRM 로드: GLTFLoader + `register(parser => new VRMLoaderPlugin(parser))`, `gltf.userData.vrm`. `VRMUtils.removeUnnecessaryVertices`, `combineSkeletons`, VRM0이면 `rotateVRM0`. `vrm.update(min(delta, 0.1))` 후 render, 렌더는 30 fps 상한(얼굴 데이터가 30 fps). z-order: 오버레이(3) > 미리보기(2) > 아바타(1).
 - 파일 출처: `public/avatar.vrm`(gitignore) 우선 → 없으면 "VRM 불러오기" 버튼(파일 선택, 객체 URL) → 둘 다 없으면 아바타 영역에 안내 문구.
+- 안내 문구(아바타·얼굴 상태)는 DOM 요소 `#avatar-msg`(상단 중앙)에 쓴다. 'VRM 불러오기'는 오른쪽 위 Reset 옆.
 - 영상 표시 상자 `#camview`: `avatar`(영상 숨김 + 미리보기), `avatar-nopip`(미리보기 없음), `video`(영상 보임, 아바타 숨김). 저장 키 `hcw.camview.v1`, 기본 `avatar`. 영상 숨김은 `opacity: 0`(프레임 디코딩·requestVideoFrameCallback 유지), 미리보기는 같은 비디오 요소를 구석 22% 폭으로 축소.
 
 ### 3-5. 유령 손
@@ -66,14 +69,18 @@
 
 | 상황 | 처리 |
 |---|---|
-| `face_landmarker.task` 없음 | 시작 시 자산 HEAD 확인에 추가 → "npm run setup" 안내 |
+| `face_landmarker.task` 없음 | 선택 자산: 별도 HEAD로 확인해 없으면 얼굴 없이 시작 + 알림 1회("npm run setup"). setup 스크립트도 WARN으로 끝낸다 |
 | VRM 파일 없음/로드 실패 | 아바타 영역에 안내, 나머지 기능 정상. 콘솔에 원인 |
 | VRM 0.x 모델(VRoid Studio 구버전) | `vrm.meta.metaVersion === "0"`이면 `rotateVRM0` |
 | 표정 이름이 모델에 없음 | `expressionManager.getExpression(name)`이 null이면 건너뜀 |
 | 얼굴 미검출 | 표정 0으로 완화, 머리 정면 복귀 |
 | 얼굴 모델 GPU 실패 | CPU 폴백(손 모델과 동일) |
-| WebGL 컨텍스트 손실 | `webglcontextlost` → 아바타 숨기고 안내, `restored`에서 재생성 |
-| 성능 | 손+얼굴+렌더. fps 20 미만이면 face.everyNFrames 2 권고(알림) |
+| WebGL 컨텍스트 손실 | `webglcontextlost`(preventDefault) → 렌더 건너뛰고 안내, `restored`에서 재개(three.js 기본 복구) |
+| 얼굴 추적·아바타 렌더 런타임 예외 | 자기 try/catch, 연속 10회면 그 기능만 끔. 손·소리는 그대로 |
+| VRM 로드 중 다른 로드 | 세대 번호로 뒤처진 로드 폐기(CANCELLED) |
+| 영상 모드에서 아바타 캔버스 크기 0 | resize 건너뜀, 아바타 모드 진입 시 1회 재측정 |
+| 렌더러 생성 실패(하드웨어 가속 꺼짐) | 영상 모드로 자동 폴백(저장 안 함) + 알림 |
+| 성능 | 손+얼굴+렌더. CPU 폴백이면 2프레임마다, GPU여도 3초간 fps<20이면 2프레임마다(알림 1회) |
 | 아바타 모드에서 손 위치 혼란 | 유령 손 + 구석 미리보기 |
 
 ## 5. 테스트
@@ -95,3 +102,8 @@
 | 얼굴 모델 | `storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task` HEAD | 200, 3,758,596 bytes |
 | VRoid Studio 내보내기 | vroid.com 공지 v1.20.0(2023-03-02) | VRM 0.0과 VRM 1.0 둘 다 선택 가능. README에 "VRM 1.0 권장, 0.0도 자동 회전으로 지원"으로 안내 |
 | 검증용 샘플 VRM | pixiv/three-vrm 저장소 `VRM1_Constraint_Twist_Sample.vrm` | 200, 10,776,032 bytes(VRM 1.0). 로드 확인용으로만 임시 사용, 커밋 금지 |
+
+
+## 8. 실패 분석 반영(2판)
+
+`docs/superpowers/specs/2026-10-07-avatar-failure-analysis.md`의 결정을 본문 3·4장에 반영했다(격리·선택 자산·세대 번호·크기 0 가드·배경 로드·30 fps 상한·dt 상한·NaN 가드·VRM 0.x 부호·headAxisSign 기본 {1,1,1}·surprised 공식 통일·유예 300 ms·DOM 안내 요소·VRM 버튼 위치·Vite optimizeDeps). 구현 계획 2판: `docs/superpowers/plans/2026-10-07-avatar.md`.
