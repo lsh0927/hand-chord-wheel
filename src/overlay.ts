@@ -34,6 +34,12 @@ export interface HandView {
   all: Point[]; // 21점(거울 변환 좌표) — 유령 손 선분용
 }
 
+export interface StringsView {
+  x0: number;
+  x1: number;
+  ys: number[]; // 위(낮은 줄)부터
+  flash: number[]; // 줄별 0~1(타격 직후 1)
+}
 export interface Scene {
   width: number;
   height: number;
@@ -42,6 +48,9 @@ export interface Scene {
   hand: HandView | null;
   otherPalms: Point[]; // 선택되지 않은 손(회색 점)
   connections: ReadonlyArray<{ start: number; end: number }>; // 손 관절 연결(유령 손)
+  leftHand: HandView | null; // 스트럼 모드의 왼손(연둣빛 유령 손)
+  pick: Point | null; // 왼손 검지 끝(피크)
+  strings: StringsView | null; // 스트럼 모드의 가상 줄
   openPercent: number;
   level: number;
   muted: boolean;
@@ -126,6 +135,39 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
     drawFingerPanel(ctx, g, s, H);
   }
 
+  // 스트럼 줄(낮은 줄이 위·굵게). 타격 뒤 150 ms 번쩍임
+  if (s.strings) {
+    const v = s.strings;
+    ctx.save();
+    ctx.lineCap = "round";
+    v.ys.forEach((y, i) => {
+      const f = v.flash[i] ?? 0;
+      ctx.strokeStyle = `rgba(255,255,255,${(0.35 + 0.6 * f).toFixed(3)})`;
+      ctx.lineWidth = 4 - i * 0.4 + f * 2;
+      ctx.shadowColor = f > 0 ? `rgba(${BLUE},${f.toFixed(3)})` : "transparent";
+      ctx.shadowBlur = f > 0 ? 12 : 0;
+      ctx.beginPath();
+      ctx.moveTo(v.x0, y);
+      ctx.lineTo(v.x1, y);
+      ctx.stroke();
+    });
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.font = `700 ${Math.round(H * 0.022)}px system-ui, sans-serif`;
+    ctx.fillText("STRUM · L", v.x0, (v.ys[0] ?? 0) - H * 0.015);
+    ctx.restore();
+  }
+  // 왼손(스트럼): 연둣빛 유령 손 + 피크 점
+  if (s.leftHand) drawGhostHand(ctx, s.leftHand, s.connections, "170,255,190");
+  if (s.pick) {
+    ctx.beginPath();
+    ctx.arc(s.pick.x, s.pick.y, 7, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${BLUE},0.95)`;
+    ctx.fill();
+  }
+
   // 선택되지 않은 손: 회색 점
   ctx.fillStyle = "rgba(200,200,200,0.5)";
   for (const p of s.otherPalms) {
@@ -136,27 +178,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
 
   // 선택된 손: 손끝 5개와 손바닥 중심
   if (s.hand) {
-    // 유령 손: 관절 연결선 + 관절 점(반투명). 아바타 모드에서 손 위치를 알려 준다
-    ctx.save();
-    ctx.strokeStyle = "rgba(255,255,255,0.55)";
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    for (const c of s.connections) {
-      const a = s.hand.all[c.start];
-      const b = s.hand.all[c.end];
-      if (!a || !b) continue;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-    }
-    ctx.fillStyle = "rgba(255,255,255,0.7)";
-    for (const p of s.hand.all) {
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
+    drawGhostHand(ctx, s.hand, s.connections, "255,255,255"); // 유령 손: 아바타 모드에서 손 위치를 알려 준다
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     for (const t of s.hand.tips) {
       ctx.beginPath();
@@ -215,6 +237,30 @@ export function drawScene(ctx: CanvasRenderingContext2D, s: Scene): void {
     ctx.fillText(s.notice, W / 2, 16, W * 0.6); // 오른쪽 위 버튼 묶음(VRM·Reset) 아래로 꼬리가 들어가지 않게
   }
   if (s.message) centerMessage(ctx, W, H, s.message, s.anchor, s.mode, g);
+}
+
+/** 관절 연결선 + 관절 점(반투명) */
+function drawGhostHand(ctx: CanvasRenderingContext2D, hand: HandView, connections: ReadonlyArray<{ start: number; end: number }>, rgb: string): void {
+  ctx.save();
+  ctx.strokeStyle = `rgba(${rgb},0.55)`;
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  for (const c of connections) {
+    const a = hand.all[c.start];
+    const b = hand.all[c.end];
+    if (!a || !b) continue;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.fillStyle = `rgba(${rgb},0.7)`;
+  for (const p of hand.all) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function hudBox(ctx: CanvasRenderingContext2D, x: number, y: number, label: string, value: string, H: number): void {

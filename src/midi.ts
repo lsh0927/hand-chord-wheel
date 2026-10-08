@@ -1,6 +1,6 @@
 import { CONFIG } from "./config";
 import type { ChordOutput } from "./output";
-import { chordChange, clamp7, controlChange, levelToCc, noteOff, panicMessages, type MidiMessage } from "./midi-messages";
+import { chordChange, clamp7, controlChange, levelToCc, noteOff, noteOn, panicMessages, type MidiMessage } from "./midi-messages";
 
 export interface MidiPortInfo {
   id: string;
@@ -90,6 +90,8 @@ export class MidiManager {
 /** 포트 하나로 보내는 ChordOutput 구현 */
 export class MidiOutput implements ChordOutput {
   private held: number[] = [];
+  private stringNotes: (number | undefined)[] = []; // 줄별 울리는 음(스트럼)
+  private lastScheduledAt = 0; // 마지막 예약 시각(performance.now 기준) — 종료 메시지는 이 뒤에
   private lastCc = -1;
   private sendErrors = 0;
   private disposed = false;
@@ -143,20 +145,58 @@ export class MidiOutput implements ChordOutput {
     this.sendAll([controlChange(CONFIG.midi.channel, CONFIG.midi.ccExpression, v)]);
   }
 
-  stop(): void {
-    if (this.held.length === 0) return;
-    const msgs = this.held.map((n) => noteOff(CONFIG.midi.channel, n));
-    this.held = [];
-    this.sendAll(msgs);
+  /**
+   * 줄 하나를 튕긴다. 같은 줄의 이전 음은 Note Off 먼저. 프레임 안 시차(delayMs)는 timestamp 예약으로 보존하고,
+   * 뮤트(holdMs)는 그 뒤 Note Off를 예약한다. 마지막 예약 시각을 기억해 종료 메시지가 그보다 앞서지 않게 한다.
+   */
+  pluck(voice: number, midi: number, velocity: number, delayMs: number, holdMs: number | null, _muted: boolean): void {
+    if (this.disposed) return;
+    const ch = CONFIG.midi.channel;
+    const at = performance.now() + Math.max(0, delayMs);
+    const msgs: Array<[MidiMessage, number]> = [];
+    const prev = this.stringNotes[voice];
+    if (prev !== undefined) msgs.push([noteOff(ch, prev), at]);
+    msgs.push([noteOn(ch, midi, Math.round(Math.min(1, Math.max(0, velocity)) * 127)), at]);
+    let last = at;
+    if (holdMs !== null) {
+      last = at + holdMs;
+      msgs.push([noteOff(ch, midi), last]);
+      this.stringNotes[voice] = undefined;
+    } else {
+      this.stringNotes[voice] = midi;
+    }
+    this.lastScheduledAt = Math.max(this.lastScheduledAt, last);
+    this.sendAllAt(msgs);
   }
 
-  /** 걸린 음 방지(Reset·pagehide·탭 숨김·오류): 들고 있던 음 Off + CC123 + CC120 */
+  /** 종료 메시지를 보낼 시각: 지금과 마지막 예약 중 늦은 쪽 + 1 ms (예약된 Note On이 종료 뒤에 켜지면 음이 걸린다) */
+  private afterScheduled(): number {
+    return Math.max(performance.now(), this.lastScheduledAt) + 1;
+  }
+
+  /** 패드 음 + 울리는 줄 전부 */
+  private ringing(): number[] {
+    return [...this.held, ...this.stringNotes.filter((n): n is number => n !== undefined)];
+  }
+
+  stop(): void {
+    const notes = this.ringing();
+    if (notes.length === 0) return;
+    const at = this.afterScheduled();
+    this.held = [];
+    this.stringNotes = [];
+    this.sendAllAt(notes.map((n): [MidiMessage, number] => [noteOff(CONFIG.midi.channel, n), at]));
+  }
+
+  /** 걸린 음 방지(Reset·pagehide·탭 숨김·오류): 울리는 음 전부 Off + CC123 + CC120. 예약된 타격보다 뒤 시각으로 */
   panic(): void {
     if (this.disposed) return;
-    const msgs = panicMessages(this.held, CONFIG.midi.channel);
+    const at = this.afterScheduled();
+    const msgs = panicMessages(this.ringing(), CONFIG.midi.channel);
     this.held = [];
+    this.stringNotes = [];
     this.lastCc = -1;
-    this.sendAll(msgs);
+    this.sendAllAt(msgs.map((m): [MidiMessage, number] => [m, at]));
   }
 
   isRunning(): boolean {
@@ -176,8 +216,9 @@ export class MidiOutput implements ChordOutput {
     if (this.disposed) return;
     this.disposed = true;
     this.detach();
-    this.trySendRaw(panicMessages(this.held, CONFIG.midi.channel));
+    this.trySendRaw(panicMessages(this.ringing(), CONFIG.midi.channel), this.afterScheduled());
     this.held = [];
+    this.stringNotes = [];
   }
 
   private detach(): void {
@@ -194,17 +235,36 @@ export class MidiOutput implements ChordOutput {
     if (this.disposed) return;
     this.disposed = true;
     this.detach();
-    this.trySendRaw(panicMessages(this.held, CONFIG.midi.channel));
+    this.trySendRaw(panicMessages(this.ringing(), CONFIG.midi.channel), this.afterScheduled());
     this.held = [];
+    this.stringNotes = [];
     queueMicrotask(() => this.onFatal(reason));
   }
 
-  private trySendRaw(msgs: MidiMessage[]): void {
+  private trySendRaw(msgs: MidiMessage[], at: number): void {
     for (const m of msgs) {
       try {
-        this.port.send(m);
+        this.port.send(m, at);
       } catch {
         /* 끊긴 포트면 실패하는 것이 정상 */
+      }
+    }
+  }
+
+  /** timestamp 예약 전송. 오류 처리는 sendAll과 동일 */
+  private sendAllAt(msgs: Array<[MidiMessage, number]>): void {
+    if (this.disposed) return;
+    for (const [m, at] of msgs) {
+      try {
+        this.port.send(m, at);
+        this.sendErrors = 0;
+      } catch (e) {
+        this.sendErrors++;
+        console.warn("MIDI 전송 실패", e);
+        if (this.sendErrors >= CONFIG.midi.maxSendErrors) {
+          this.fail("MIDI 전송이 반복 실패했습니다");
+          return;
+        }
       }
     }
   }

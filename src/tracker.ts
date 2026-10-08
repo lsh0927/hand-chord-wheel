@@ -1,6 +1,6 @@
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import { CONFIG } from "./config";
-import { EMPTY_SELECTION, selectRightHand, type HandSelection } from "./hands";
+import { EMPTY_SELECTION, selectBothHands, type BothHands } from "./hands";
 import type { Point } from "./mapping";
 
 export type Delegate = "GPU" | "CPU";
@@ -50,12 +50,13 @@ export class HandTracker {
   }
 
   /** 현재 비디오 프레임에서 오른손 고르기. 타임스탬프는 단조 증가해야 한다. */
-  detect(video: HTMLVideoElement, nowMs: number, opts: { swap: boolean; prevPalm: Point | null }): HandSelection {
-    if (!this.landmarker) return EMPTY_SELECTION;
+  /** 오른손(코드)과 왼손(스트럼)을 함께 고른다. 타임스탬프는 단조 증가로 보정 */
+  detect(video: HTMLVideoElement, nowMs: number, opts: { swap: boolean; prevRight: Point | null; prevLeft: Point | null }): BothHands {
+    if (!this.landmarker) return { right: EMPTY_SELECTION, left: null };
     const ts = Math.max(Math.floor(nowMs), this.lastTs + 1);
     this.lastTs = ts;
     const result = this.landmarker.detectForVideo(video, ts);
-    return selectRightHand(result, { swap: opts.swap, minScore: CONFIG.tracker.minHandednessScore, prevPalm: opts.prevPalm });
+    return selectBothHands(result, { swap: opts.swap, minScore: CONFIG.tracker.minHandednessScore, prevRight: opts.prevRight, prevLeft: opts.prevLeft });
   }
 
   close(): void {
