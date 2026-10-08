@@ -60,7 +60,7 @@
 - VRM 로드: GLTFLoader + `register(parser => new VRMLoaderPlugin(parser))`, `gltf.userData.vrm`. `VRMUtils.removeUnnecessaryVertices`, `combineSkeletons`, VRM0이면 `rotateVRM0`. `vrm.update(min(delta, 0.1))` 후 render, 렌더는 30 fps 상한(얼굴 데이터가 30 fps). z-order: 오버레이(3) > 미리보기(2) > 아바타(1).
 - 파일 출처: `public/avatar.vrm`(gitignore) 우선 → 없으면 "VRM 불러오기" 버튼(파일 선택, 객체 URL) → 둘 다 없으면 아바타 영역에 안내 문구.
 - 안내 문구(아바타·얼굴 상태)는 DOM 요소 `#avatar-msg`(상단 중앙)에 쓴다. 'VRM 불러오기'는 오른쪽 위 Reset 옆.
-- 영상 표시 상자 `#camview`: `avatar`(영상 숨김 + 미리보기), `avatar-nopip`(미리보기 없음), `video`(영상 보임, 아바타 숨김). 저장 키 `hcw.camview.v1`, 기본 `avatar`. 영상 숨김은 `opacity: 0`(프레임 디코딩·requestVideoFrameCallback 유지), 미리보기는 같은 비디오 요소를 구석 22% 폭으로 축소.
+- 영상 표시 상자 `#camview`: `avatar`(영상 숨김 + 미리보기), `avatar-nopip`(미리보기 없음), `video`(영상 보임, 아바타 숨김). 저장 키 `hcw.camview.v1`, 기본 `video`(2026-10-08 변경: 처음 열 때 캐릭터가 갑자기 떠서 놀란다는 사용자 피드백. 아바타는 상자에서 고를 때 켠다). 영상 숨김은 `opacity: 0`(프레임 디코딩·requestVideoFrameCallback 유지), 미리보기는 같은 비디오 요소를 구석 22% 폭으로 축소.
 
 ### 3-5. 유령 손
 - 선택된 오른손의 21점을 `HandLandmarker.HAND_CONNECTIONS`(start/end 쌍)로 잇는 반투명 흰 선(폭 3)과 관절 점(반지름 4), 손끝은 기존처럼 더 크게. 아바타 모드·영상 모드 모두에서 그린다(영상 모드에서는 기존 점 위에 선이 더해질 뿐).
