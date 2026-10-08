@@ -308,21 +308,26 @@ export function velocityFromSpeed(speed: number, soft: number, hard: number, min
 - [ ] **Step 1: 테스트 (RED)** — tests/chords.test.ts 끝에(import에 `voicing` 추가)
 
 ```ts
-describe("voicing (기타식 6음)", () => {
-  it("A → 개방현 A 코드와 같은 배치", () => {
-    expect(voicing("A")).toEqual([45, 52, 57, 61, 64, 69]); // A2 E3 A3 C#4 E4 A4
+describe("voicing (기타 모양 6음)", () => {
+  it("3화음은 E자 바레 모양: 근음·5도·근음·3도·5도·근음", () => {
+    expect(voicing("A")).toEqual([45, 52, 57, 61, 64, 69]); // A2 E3 A3 C#4 E4 A4 = 개방현 A
+    expect(voicing("B")).toEqual([47, 54, 59, 63, 66, 71]); // 바레 B
+    expect(voicing("C")).toEqual([48, 55, 60, 64, 67, 72]); // 근음이 E2 아래라 C3부터
   });
-  it("B → 바레 B", () => {
-    expect(voicing("B")).toEqual([47, 54, 59, 63, 66, 71]);
+  it("7화음은 E7 모양: 7도가 3도보다 아래", () => {
+    expect(voicing("B7")).toEqual([47, 54, 57, 63, 66, 71]); // B2 F#3 A3 D#4 F#4 B4
+    expect(voicing("Emaj7")).toEqual([40, 47, 51, 56, 59, 64]); // E2 B2 D#3 G#3 B3 E4
+    expect(voicing("F#7sus4")).toEqual([42, 49, 52, 59, 61, 66]); // 4도가 3도 자리
   });
-  it("Em6 → E2 B2 E3 G3 C#4 B4", () => {
-    expect(voicing("Em6")).toEqual([40, 47, 52, 55, 61, 71]);
+  it("6화음·add는 근음·5도·근음·3도·추가음·근음", () => {
+    expect(voicing("Em6")).toEqual([40, 47, 52, 55, 61, 64]); // E2 B2 E3 G3 C#4 E4 = 개방현 Em6
+    expect(voicing("Cadd9")).toEqual([48, 55, 62, 64, 67, 72]); // 기본 배치가 C6까지 치솟아 대체 배치
   });
-  it("A5 파워코드는 근음·5도만 쌓는다", () => {
+  it("9화음은 근음·3도·7도·9도·5도·근음(재즈 배치)", () => {
+    expect(voicing("A9")).toEqual([45, 49, 55, 59, 64, 69]);
+  });
+  it("파워코드는 근음·5도만 교대로", () => {
     expect(voicing("A5")).toEqual([45, 52, 57, 64, 69, 76]);
-  });
-  it("C는 근음이 E2 아래라 C3부터", () => {
-    expect(voicing("C")).toEqual([48, 55, 60, 64, 67, 72]);
   });
   it("잘못된 기호는 빈 배열, count는 음 개수", () => {
     expect(voicing("H#")).toEqual([]);
@@ -337,34 +342,60 @@ describe("voicing (기타식 6음)", () => {
 
 ```ts
 /**
- * 기타식 보이싱: 근음을 lowest(E2=40) 이상에서 가장 가까운 음에 두고, 그 위로 [5도, 근음, 3도, 나머지…]를 순환하며
- * "직전 음보다 높은 가장 가까운 그 음"을 쌓아 count개를 만든다. A → A2 E3 A3 C#4 E4 A4(개방현 A와 동일).
+ * 기타 모양 보이싱. tonal의 음정으로 역할(근음·3도/sus·5도·7도·추가음)을 나누고 코드 종류별 틀에 맞춰
+ * "직전 음보다 높은 가장 가까운 그 음"을 쌓는다. 근음은 lowest(E2=40) 이상에서 가장 가까운 음.
+ *   3화음 R-5-R-3-5-R (E자 바레) · 7화음 R-5-7-3-5-R (E7 모양) · 6/add R-5-R-3-X-R · 9화음 R-3-7-X-5-R · 파워 R-5-R-5-R-5
+ * 틀이 둘이면 윗음이 근음+27반음을 넘지 않는 첫 틀을 고른다(Cadd9처럼 치솟는 배치 방지).
  */
 export function voicing(symbol: string, count = 6, lowest = 40): number[] {
   const c = Chord.get(symbol);
   if (c.empty || !c.tonic) return [];
-  const pcs = c.notes.map((n) => Note.get(n).chroma).filter((x): x is number => typeof x === "number");
   const rootPc = Note.get(c.tonic).chroma;
-  if (typeof rootPc !== "number" || pcs.length === 0) return [];
-  const root = lowest + ((rootPc - (lowest % 12) + 12) % 12);
-  const fifthPc = (rootPc + 7) % 12;
-  const hasFifth = pcs.includes(fifthPc);
-  const third = pcs.find((pc) => pc !== rootPc && pc !== fifthPc);
-  const rest = pcs.filter((pc) => pc !== rootPc && pc !== fifthPc && pc !== third);
-  const cycle = [hasFifth ? fifthPc : (third ?? rootPc), rootPc, ...(third !== undefined ? [third] : []), ...rest];
-  const out = [root];
-  for (let i = 0; out.length < count; i++) {
-    const pc = cycle[i % cycle.length] ?? rootPc;
-    const prev = out[out.length - 1] ?? root;
-    let n = prev + ((pc - (prev % 12) + 12) % 12);
-    if (n === prev) n += 12;
-    out.push(n);
-  }
-  return out;
+  if (typeof rootPc !== "number") return [];
+  let fifth: number | undefined;
+  let third: number | undefined;
+  let seventh: number | undefined;
+  const extras: number[] = [];
+  c.intervals.forEach((iv, i) => {
+    const pc = Note.get(c.notes[i] ?? "").chroma;
+    if (typeof pc !== "number") return;
+    const deg = parseInt(iv, 10);
+    if (deg === 1) return;
+    if (deg === 5 && fifth === undefined) fifth = pc;
+    else if ((deg === 3 || deg === 2 || deg === 4) && third === undefined) third = pc;
+    else if (deg === 7 && seventh === undefined) seventh = pc;
+    else extras.push(pc);
+  });
+  const R = rootPc;
+  const F = fifth ?? third ?? R;
+  const T = third ?? fifth ?? R;
+  const S = seventh;
+  const X = extras[0];
+  let templates: number[][];
+  if (S !== undefined && X !== undefined) templates = [[R, T, S, X, F, R], [R, F, S, T, X, R]];
+  else if (S !== undefined) templates = [[R, F, S, T, F, R]];
+  else if (X !== undefined) templates = [[R, F, R, T, X, R], [R, F, X, T, F, R]];
+  else if (third === undefined && fifth !== undefined) templates = [[R, F, R, F, R, F]];
+  else templates = [[R, F, R, T, F, R]];
+  const root = lowest + ((R - (lowest % 12) + 12) % 12);
+  const build = (order: number[]): number[] => {
+    const out = [root];
+    for (let i = 1; out.length < count; i++) {
+      const pc = order[i % order.length] ?? R;
+      const prev = out[out.length - 1] ?? root;
+      let n = prev + ((pc - (prev % 12) + 12) % 12);
+      if (n === prev) n += 12;
+      out.push(n);
+    }
+    return out;
+  };
+  const results = templates.map(build);
+  return results.find((v) => (v[v.length - 1] ?? root) <= root + 27) ?? results.reduce((a, b) => ((a[a.length - 1] ?? 0) <= (b[b.length - 1] ?? 0) ? a : b));
 }
 ```
+(Node 25에서 tonal 6.4.3으로 팔레트 12코드 + A5·E5·Dm7·G7·Cmaj7·Asus2·Cadd9·Cdim·Caug·C13을 돌려 2026-10-08 확인: 전부 실제 기타 모양과 일치하거나 자연스러움.)
 
-- [ ] **Step 4: 통과 → Commit** `feat: 코드 → 기타식 6음 보이싱`
+- [ ] **Step 4: 통과 → Commit** `feat: 코드 → 기타 모양 6음 보이싱`
 
 ---
 
