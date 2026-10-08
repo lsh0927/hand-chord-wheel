@@ -5,6 +5,7 @@ import { CONFIG } from "../src/config";
 /** MIDIOutput 인터페이스 중 MidiOutput이 쓰는 부분만 흉내 낸 가짜 포트. 보낸 메시지를 log에 쌓는다 */
 function fakePort(failSend: () => boolean = () => false) {
   const log: number[][] = [];
+  const times: (number | undefined)[] = []; // send의 timestamp(예약 전송 검증용)
   const listeners = new Set<() => void>();
   const port = {
     id: "fake-1",
@@ -21,12 +22,13 @@ function fakePort(failSend: () => boolean = () => false) {
     removeEventListener: (_t: string, fn: () => void) => {
       listeners.delete(fn);
     },
-    send: (m: number[]) => {
+    send: (m: number[], at?: number) => {
       if (failSend()) throw new Error("InvalidStateError");
       log.push([...m]);
+      times.push(at);
     },
   };
-  return { port: port as unknown as MIDIOutput, log, listeners, fire: () => listeners.forEach((fn) => fn()) };
+  return { port: port as unknown as MIDIOutput, log, times, listeners, fire: () => listeners.forEach((fn) => fn()) };
 }
 const CH = 0; // 채널 1 → 하위 4비트 0
 const flush = () => Promise.resolve();
@@ -178,5 +180,59 @@ describe("MidiOutput 장애 처리", () => {
       [0xb0 | CH, 120, 0],
     ]);
     expect(out.isRunning()).toBe(false);
+  });
+});
+
+describe("MidiOutput.pluck", () => {
+  it("Note On을 예약 전송하고, 뮤트는 holdMs 뒤 Note Off를 예약한다", async () => {
+    const f = fakePort();
+    const out = new MidiOutput(f.port, vi.fn());
+    await out.start();
+    out.pluck(2, 57, 0.5, 0, 40, true);
+    expect(f.log).toEqual([
+      [0x90 | CH, 57, 64],
+      [0x80 | CH, 57, 0],
+    ]);
+    expect(typeof f.times[0]).toBe("number");
+    expect(f.times[1]! - f.times[0]!).toBeCloseTo(40, 6);
+  });
+  it("같은 줄을 다시 치면 이전 음 Note Off가 먼저 나가고, stop()이 울리는 줄을 모두 끈다", async () => {
+    const f = fakePort();
+    const out = new MidiOutput(f.port, vi.fn());
+    await out.start();
+    out.pluck(0, 40, 1, 0, null, false);
+    out.pluck(0, 45, 1, 10, null, false);
+    expect(f.log).toEqual([
+      [0x90 | CH, 40, 127],
+      [0x80 | CH, 40, 0],
+      [0x90 | CH, 45, 127],
+    ]);
+    expect(f.times[2]! - f.times[1]!).toBe(0); // 같은 타격 안
+    f.log.length = 0;
+    out.stop();
+    expect(f.log).toEqual([[0x80 | CH, 45, 0]]);
+  });
+  it("stop()·panic()의 종료 메시지는 마지막 예약 Note On보다 뒤 시각으로 예약된다(걸린 음 방지)", async () => {
+    const f = fakePort();
+    const out = new MidiOutput(f.port, vi.fn());
+    await out.start();
+    out.pluck(5, 71, 1, 30, null, false);
+    const onAt = f.times[0]!;
+    out.stop();
+    expect(f.times[1]!).toBeGreaterThan(onAt);
+    out.pluck(1, 52, 1, 25, null, false);
+    const onAt2 = f.times[2]!;
+    out.panic();
+    expect(f.times.length).toBeGreaterThan(3);
+    for (const t of f.times.slice(3)) expect(t!).toBeGreaterThan(onAt2);
+  });
+  it("세기는 벨로시티 1~127로", async () => {
+    const f = fakePort();
+    const out = new MidiOutput(f.port, vi.fn());
+    await out.start();
+    out.pluck(1, 52, 0.35, 0, null, false);
+    out.pluck(2, 57, 0, 0, null, false);
+    expect(f.log[0]![2]).toBe(44);
+    expect(f.log[1]![2]).toBe(1);
   });
 });
