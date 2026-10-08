@@ -1,0 +1,105 @@
+# Hand Chord Wheel — 5차 설계: 왼손 스트럼 (가상 줄 6개)
+
+작성일 2026-10-08. 사용자 결정: 드럼은 GarageBand에 맡기고 손짓은 기타 스트럼부터 → **왼손이 스트럼, 오른손이 코드** → 감지 방식은 **가상 줄 6개**.
+
+## 1. 무엇을 만드나
+
+지금은 오른손이 코드를 바꾸는 순간 화음이 한 번 울리고 이어지기만 한다(신디사이저 패드). 스트럼 모드에서는 화면 한쪽에 기타 줄처럼 가로선 6개를 그려 두고, **왼손 검지 끝이 줄을 지날 때마다 그 줄의 음 하나**가 울린다. 빠르게 쓸면 여섯 음이 손 속도대로 촤랑 울리고(스트럼), 천천히 내리면 한 음씩(아르페지오), 세 줄만 지나면 세 음만 난다. 위로 올리면 업 스트로크다. 오른손은 지금처럼 손가락 수(또는 휠)로 코드를 고르고 손 높이로 전체 음량을 정하되, **코드가 바뀌어도 그 자체로는 소리가 나지 않는다**(실제 기타: 프렛 손이 바뀌면 울리던 줄은 멎고, 다음 스트럼에서 새 코드가 난다). 왼손이 주먹이면 손바닥으로 줄을 막은 뮤트(짧고 둔탁한 소리), 쓰는 속도가 세기다.
+
+### 대표 시나리오
+1. 사용자가 오른손 검지·중지를 펴 두 번째 코드 **Em6**를 잡는다. 아직 소리는 없다. 화면 왼쪽에 줄 6개가 보인다.
+2. 왼손 검지로 줄을 위에서 아래로 0.15초에 쓸어내린다 → E2, B2, E3, G3, C#4, B4가 손이 각 줄을 지난 시각대로(약 25 ms 간격) 차례로 울린다. 세기는 속도 1.9 영상높이/초 → 벨로시티 약 0.8.
+3. 같은 코드에서 왼손을 올리면 B4부터 거꾸로 울린다(업 스트로크, 보통 더 가볍게).
+4. 오른손을 세 손가락으로 바꿔 **A9**를 잡으면 울리던 Em6 줄이 멎고, 다음 스트럼부터 A9 보이싱이 난다.
+5. 왼손을 주먹 쥔 채 쓸면 "척척" 하는 뮤트 소리. 오른손을 내리면 전체가 작아진다(기존 높이 음량).
+6. 하단 "연주: 코드 패드"로 바꾸면 이전과 똑같이 코드 변경 즉시 울린다.
+
+### 범위 밖(이번 단계)
+- 아르페지오 패턴 자동 재생, 벤딩·비브라토·와와, 베이스·피아노·드럼, 왼손 손가락 개별 뜯기(핑거스타일), 오른손 스트럼(한 손 모드), 아바타 팔 연동.
+
+## 2. 구조
+
+| 파일 | 책임 |
+|---|---|
+| `src/hands.ts` (수정) | `selectHand(result, wanted, …)`로 일반화, `selectBothHands(result, {swap, minScore, prevRight, prevLeft})` → 오른손 선택(기존 `HandSelection`) + 왼손(`ChosenHand \| null`). 기존 `selectRightHand`는 호환 유지 |
+| `src/tracker.ts` (수정) | `detect()`가 `BothHands`를 돌려준다 |
+| `src/strum.ts` (신규, 순수) | `stringLines(H, topY, gapY, n)`, `StrumDetector.update(point, now, lines, band, H): StrumEvent[]`(선분–줄 교차, 시각 보간, 속도, 불응기, 최소 속도), `velocityFromSpeed()` |
+| `src/chords.ts` (수정) | `voicing(symbol, count=6, lowest=40)`: 코드 → 기타식 6음 보이싱(낮은 줄부터) |
+| `src/output.ts` (수정) | `ChordOutput.pluck(voice, midi, velocity, delayMs, holdMs)` 추가, `stop()`은 울리는 줄도 놓는다 |
+| `src/audio.ts` (수정) | 줄 6개 = `Tone.PluckSynth`(Karplus-Strong) 6개 + 줄별 `Gain`(세기). 패드 모드 `PolySynth`는 그대로 |
+| `src/midi.ts` (수정) | `pluck()`: 같은 줄의 이전 음 Note Off + Note On을 `port.send(data, timestamp)`로 **예약 전송**(프레임 안 시차 유지), 뮤트는 holdMs 뒤 Note Off 예약. `stop()`·패닉은 줄 음까지 포함 |
+| `src/main.ts` (수정) | 연주 방식 상자(`hcw.play.v1`), 오른손 경로를 `soundChord()`로 통일(패드: 즉시, 스트럼: 보이싱만), `processLeftHand()`(피크 점·뮤트·타격→pluck), 안내문, 표시 데이터 |
+| `src/overlay.ts` (수정) | 줄 6개(낮은 줄이 위·굵게, 타격 시 150 ms 번쩍임), 왼손 유령 손(연둣빛)과 피크 점, "STRUM · L" 라벨 |
+| `index.html` (수정) | `#play` 상자("연주: 스트럼 / 코드 패드") |
+| `tests/` | strum(교차·보간·순서·대역·불응기·속도·세기), chords(voicing), hands(selectBothHands), midi-output(pluck 예약·뮤트·재타격) |
+
+## 3. 동작 규칙
+
+### 3-1. 손 선택
+- MediaPipe는 이미 두 손을 추적한다(numHands 2). `selectBothHands`가 "Right"(swap이면 "Left") 라벨을 오른손으로, 반대 라벨을 왼손으로 고른다. 각각 점수 ≥ 0.7, 손바닥이 화면 안, 후보가 여럿이면 직전 위치에 가까운 손.
+- 선택되지 않은 손만 회색 점(`otherPalms`). 패드 모드에서는 왼손도 회색 점으로만 보인다.
+- 왼손이 사라지면 그 즉시 스트럼 감지기의 직전 위치를 지운다(다시 나타날 때 옛 위치에서 줄을 지난 것으로 오인하지 않게).
+
+### 3-2. 줄 배치(픽셀, 오버레이 캔버스 = 영상 해상도)
+- 줄 i(0 = 가장 낮은 줄, 위)의 y = (0.36 + 0.055·i)·H → 0.36H ~ 0.635H.
+- 가로 대역은 패널 위치의 **반대편**: 패널이 오른쪽 아래(기본)면 x ∈ [0.06W, 0.42W], 왼쪽 아래면 [0.58W, 0.94W], 가운데면 [0.04W, 0.27W](가운데 휠 반지름 0.375H와 겹치지 않게). 미리보기(아바타 모드)는 같은 쪽 아래 0.68H부터라 겹치지 않는다.
+- 피크 점 = 왼손 검지 끝(랜드마크 8)의 거울 변환 좌표. 주먹이어도 랜드마크는 있으므로 뮤트 스트럼이 된다.
+
+### 3-3. 타격 감지·시차·세기·뮤트 (`StrumDetector`, 순수)
+- 프레임마다 피크 점의 직전 위치와 현재 위치를 잇는 선분이 줄 i를 가로지르면 타격. 교차 비율 f = (prevY − lineY)/(prevY − curY)로 교차 x·시각을 선형 보간하고, 교차 x가 대역 밖이면 무시. 직전 프레임에 정확히 줄 위에 있었으면(prevY == lineY) 그때 이미 친 것이므로 다시 세지 않는다.
+- 한 프레임에 여러 줄을 지나면 보간 시각 순으로 정렬해 돌려준다. 출력은 첫 타격을 즉시, 나머지는 첫 타격과의 시차만큼 지연해 **프레임 안 시차를 보존**한다(예: 33 ms 동안 6줄 → 약 6 ms 간격).
+- 속도 = |Δy| / H / Δt (영상 높이/초). 0.2 미만이면 떨림으로 보고 무시. 세기 = 0.35 + 0.65·clamp((속도 − 0.4)/(2.5 − 0.4)). 같은 줄은 60 ms 안에 다시 치지 않는다(불응기).
+- 방향: y가 커지면 down(낮은 줄 → 높은 줄), 작아지면 up.
+- 뮤트: 왼손 펼침%(기존 opennessPercent, 왼손 전용 EMA) < 20이면 세기 × 0.6, 90 ms 뒤 끊음.
+
+### 3-4. 보이싱 (`voicing`, 순수)
+- 근음을 E2(40) 이상에서 가장 가까운 음으로 놓고(E2~D#3), 그 위로 [5도, 근음, 3도, 나머지 음…]을 순환하며 "직전 음보다 높은 가장 가까운 그 음"을 쌓아 6음을 만든다. 5도가 없는 코드는 3도부터.
+- 예: A → A2 E3 A3 C#4 E4 A4(실제 개방현 A 코드와 동일), B → B2 F#3 B3 D#4 F#4 B4(바레 B), Em6 → E2 B2 E3 G3 C#4 B4, A5(파워코드) → A2 E3 A3 E4 A4 E5, C → C3 G3 C4 E4 G4 C5.
+- 팔레트는 그대로 쓴다(코드 이름만 바꾸면 파워코드 세트도 됨).
+
+### 3-5. 출력
+- **브라우저 신디**: 줄마다 `Tone.PluckSynth`(attackNoise 1, dampening 4000 Hz, resonance 0.97, release 0.15 s) + `Gain`. `pluck`은 `Tone.now()+delay`에 세기를 `setValueAtTime`하고 `triggerAttack(hz, t)`, 뮤트면 `triggerRelease(t+hold)`. 같은 줄 재타격은 PluckSynth 재트리거(현이 다시 튕기는 것과 같음). `stop()`은 6줄 `triggerRelease()` + 패드 음 해제.
+- **MIDI**: `port.send(data, timestamp)`(lib.dom `send(data: number[], timestamp?: DOMHighResTimeStamp)`)로 `performance.now()+delay`에 예약. 같은 줄의 이전 음은 Note Off 먼저. 뮤트는 `+holdMs`에 Note Off 예약. 벨로시티 = round(세기×127) (최소 0.35 → 44). 줄 음은 `stop()`·Reset 패닉·끊김 패닉에 모두 포함.
+- 전체 음량(오른손 높이·펼침)은 기존 `setLevel`(Tone 마스터 Gain / MIDI CC11) 그대로. 스트럼 모드에서는 오른손이 보이는 매 프레임 호출한다(치기 전에 레벨이 잡혀 있어야 함).
+
+### 3-6. 상태·모드
+- 연주 방식 상자 `#play`: `strum`(기본) / `pad`. 저장 키 `hcw.play.v1`. 바꾸면 `silence()` + 감지기 초기화.
+- 스트럼 모드에서 `state`: 줄을 쳐서 소리가 나면 PLAYING, `silence()`면 READY. `silence()`는 출력 `stop()`(패드 음 + 줄) + READY + **보이싱 비움**.
+- 오른손 코드 확정 지점(휠·손가락 공통)은 `soundChord(sector, midi)` 하나로: 패드 모드면 기존 `play`, 스트럼 모드면 섹터가 바뀌었을 때 `silence()` 후 보이싱 갱신.
+- 스트럼 타격은 보이싱이 있고 `armed`일 때만 소리. 없으면 줄만 번쩍인다(감지는 됐음을 보여 줌).
+- 오른손 쉼(주먹·쉼 원판·사라짐)·Reset·모드 변경 → `silence()` → 보이싱 없음 → 타격해도 무음.
+- 안내: 스트럼 모드에서 코드를 잡았는데 왼손이 3초 넘게 안 보이면 "왼손 검지로 줄 6개를 쓸어내리면 소리가 납니다"(10초에 한 번).
+
+### 3-7. 표시
+- 줄: 낮은 줄이 굵게(4 px → 2 px), 평소 흰색 35%, 타격 뒤 150 ms 동안 밝게. 위에 "STRUM · L".
+- 왼손: 유령 손(연둣빛) + 피크 점(검지 끝, 강조색, 반지름 7). 오른손 표시는 그대로.
+- 디버그 줄(`?debug=1`): 마지막 타격의 방향·줄·세기·속도·뮤트.
+
+## 4. 오류·엣지
+
+| 상황 | 처리 |
+|---|---|
+| 왼손이 줄 근처에서 떨림 | 최소 속도 0.2 H/s + 줄별 불응기 60 ms |
+| 한 프레임에 6줄 통과(빠른 스트럼) | 교차 시각 보간·정렬, 시차 보존 예약 |
+| 왼손이 사라졌다 다른 위치에 나타남 | 감지기 직전 위치 즉시 초기화 → 첫 프레임은 타격 없음 |
+| 두 손 라벨이 모두 Right/Left | 왼손 null → 스트럼 없음, 3초 뒤 안내 |
+| 코드 없이 스트럼 | 줄만 번쩍, 무음 |
+| 코드 바꾸는 순간 울리던 줄 | `silence()`로 멎음(기타처럼) |
+| 출력 전환 중(MIDI 끊김) | `pluck`은 현재 `output`에만; 전환 뒤 다음 타격부터 새 출력 |
+| Reset | 패닉에 줄 음 포함, 감지기 초기화, `armed` 규칙 동일 |
+| 패널을 왼쪽 아래로 | 줄 대역이 오른쪽으로 이동(반대편 규칙) |
+| 패드 모드 | 왼손은 회색 점, 기존 동작 100% 유지 |
+| MIDI 예약 전송 뒤 패닉 | 이미 예약된 Note Off는 그대로 나감(무해). 예약 Note On은 최대 지연 33 ms라 패닉 뒤 늦게 켜질 가능성 희박 — 패닉 뒤 100 ms 안의 예약을 막지는 않음(FA 확인) |
+
+## 5. 테스트
+- `tests/strum.test.ts`: 한 줄 아래로/위로 통과, 한 프레임에 3줄 통과 시 보간 시각 순서(예: y 300→420, 줄 330·360·390 → t 비율 0.25·0.5·0.75), 대역 밖 x 무시, 줄 위에 머물 때 이중 계수 없음, 최소 속도 미만 무시, 불응기, 사라짐 뒤 첫 프레임 무타격, `velocityFromSpeed` 경계값(0.4→0.35, 2.5→1, 1.45→0.675).
+- `tests/chords.test.ts`: voicing A·B·Em6·A5·C, 잘못된 기호 → [], count 4.
+- `tests/hands.test.ts`: `selectBothHands` 두 손 분리, 선택된 왼손은 otherPalms에 없음, swap.
+- `tests/midi-output.test.ts`: pluck → Note On 예약(timestamp 숫자), 같은 줄 재타격은 Note Off 먼저, 뮤트는 +90 ms Note Off, stop()이 줄 음 Note Off.
+- Playwright: 상자 기본값·저장, 줄 6개와 라벨 렌더(스크린샷), 패드 모드 전환.
+- 실측: 스트럼 체감(지연·세기·뮤트), 떨림 오작동, 보이싱 음색(브라우저 플럭 / GarageBand 통기타), 왼손 라벨 안정성.
+
+## 6. 확인된 사실
+- `MIDIOutput.send(data: number[], timestamp?: DOMHighResTimeStamp)` — TypeScript lib.dom.d.ts 19557행.
+- `Tone.PluckSynth`: `constructor(options?: {attackNoise, dampening, resonance, release})`, `triggerAttack(note, time?)`, `triggerRelease(time?)`; `Tone.Param.setValueAtTime(value, time)`; `Tone.now()` — tone 15.1.22 d.ts.
+- `Chord.get(symbol).notes`는 옥타브 없는 음이름 배열, `Note.get(name).chroma`는 0~11 — tonal 6.4.3.
