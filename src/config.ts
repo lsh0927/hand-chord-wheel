@@ -79,6 +79,45 @@ export const CONFIG = {
     levelExponent: 1.5, // 음량 곡선 지수 (실측 때 1/1.5/2 비교)
     frameMargin: 0.05, // 손목·뿌리 관절이 정규화 좌표 [-m, 1+m] 밖이면 판정 보류
   },
+  play: {
+    defaultMode: "strum", // "strum" | "pad"
+    storageKey: "hcw.play.v1",
+  },
+  strum: {
+    strings: 6,
+    pointLandmark: 8, // 왼손 검지 끝 = 피크
+    topY: 0.36, // 가장 낮은 줄(위)의 높이(영상 높이 비율)
+    gapY: 0.055, // 줄 간격
+    bandLeft: [0.06, 0.42] as const, // 패널이 오른쪽 아래일 때 줄 대역(영상 폭 비율)
+    bandRight: [0.58, 0.94] as const, // 패널이 왼쪽 아래일 때
+    bandCenter: [0.04, 0.27] as const, // 패널이 가운데일 때
+    rearmDistRatio: 0.012, // 타격 뒤 피크가 줄에서 이만큼(영상 높이 비율, 720p≈8.6px) 떨어져야 다음 타격을 센다(떨림 차단)
+    minSpeed: 0.05, // 영상 높이/초. 보조 가드
+    maxJumpRatio: 0.2, // 프레임당 변위가 영상 높이의 이 비율을 넘으면 순간이동(라벨 뒤바뀜)으로 보고 타격 없음
+    graceMs: 100, // 왼손이 이 시간 안에 다시 보이면 공백 전 위치와 잇는다
+    softSpeed: 0.4, // 이 속도에서 최소 세기
+    hardSpeed: 2.5, // 이 속도 이상이면 최대 세기
+    minVelocity: 0.35,
+    upStrokeScale: 0.85, // 업 스트로크는 조금 가볍게
+    refractoryMs: 60, // 같은 줄 재타격 최소 간격(뮤트 홀드보다 길어야 한다)
+    muteBelowPercent: 20, // 왼손 펼침 % 미만이면 뮤트
+    muteVelocityScale: 0.6,
+    muteHoldMs: 40, // 뮤트 음 길이(짧고 둔탁)
+    scheduleAheadMs: 0, // 0 = 첫 타격 즉시(프레임 안 시차만 보존). 33~40이면 프레임 경계 시차까지 보존하되 그만큼 지연
+    flashMs: 150,
+    hintAfterMs: 3000,
+    hintRepeatMs: 10000,
+  },
+  pluck: {
+    attackNoise: 1,
+    minBurstSec: 0.003, // 노이즈 버스트 최소 길이(고음 줄이 얇아지지 않게)
+    dampening: 4000, // Hz
+    muteDampening: 1500, // 뮤트 타격은 더 어둡게
+    t60Sec: 1.5, // 줄 울림이 −60 dB까지 줄어드는 시간 → 줄마다 resonance 역산
+    release: 0.08,
+    stringGain: 0.5, // 6줄 합산 클리핑 방지 계수(실측 조정)
+    velocityExponent: 1.5,
+  },
   face: {
     modelPath: "/models/face_landmarker.task",
     modelBytes: 3758596,
