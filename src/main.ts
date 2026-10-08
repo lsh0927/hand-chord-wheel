@@ -78,6 +78,7 @@ let prevLeftPalmNorm: Point | null = null;
 let leftView: HandView | null = null;
 let pickPoint: Point | null = null;
 let leftOpenPercent = 100;
+let leftLostAt: number | null = null; // 왼손 공백 시작(100 ms 넘으면 펼침 EMA 초기화)
 let voicingNotes: number[] | null = null; // 스트럼 모드에서 오른손이 잡은 코드의 6음(없으면 null)
 let voicingSector: number | null = null;
 const strikeAt: number[] = []; // 줄별 마지막 타격 시각(번쩍임)
@@ -199,6 +200,7 @@ function resetLeftHandState(): void {
   leftEmaRatio.reset();
   strikeAt.length = 0;
   strumHintSince = null;
+  leftLostAt = null;
 }
 
 /** 소리를 멈추고 READY로. 표시 칸은 호출자가 정한다. */
@@ -983,6 +985,7 @@ video.addEventListener("resize", () => {
   if (canvas.width === video.videoWidth && canvas.height === video.videoHeight) return;
   resize();
   resetHandState();
+  resetLeftHandState(); // 감지기의 직전 위치는 옛 해상도 픽셀이라 그대로 두면 가짜 타격이 난다
   silence();
 });
 
@@ -1143,9 +1146,14 @@ function soundChord(sector: number, midi: readonly number[]): boolean {
   return true;
 }
 
-function strumBand(W: number): StrumBand {
+function strumBand(W: number, H: number): StrumBand {
   const b = wheelAnchor === "bottom-left" ? CONFIG.strum.bandRight : wheelAnchor === "center" ? CONFIG.strum.bandCenter : CONFIG.strum.bandLeft;
-  return { x0: b[0] * W, x1: b[1] * W };
+  let x1 = b[1] * W;
+  if (wheelAnchor === "center") {
+    const g = wheelGeometry(W, H, wheelAnchor);
+    x1 = Math.min(x1, g.cx - g.outerR - 16); // 4:3 영상에서는 가운데 휠이 더 넓게 차지하므로 휠 바깥에서 자른다
+  }
+  return { x0: b[0] * W, x1 };
 }
 
 /** 스트럼 모드: 왼손 검지 끝이 줄을 지나면 그 줄의 음을 튕긴다. 오른손 유무와 독립 */
@@ -1155,9 +1163,14 @@ function processLeftHand(left: ChosenHand | null, now: number, W: number, H: num
   if (!left) {
     leftView = null;
     pickPoint = null;
-    strum.update(null, now, lines, strumBand(W), H); // 공백 시작(100 ms 안에 돌아오면 잇는다)
+    leftLostAt ??= now;
+    strum.update(null, now, lines, strumBand(W, H), H); // 공백 시작(100 ms 안에 돌아오면 잇는다)
     strumHint(now, false);
     return;
+  }
+  if (leftLostAt !== null) {
+    if (now - leftLostAt > CONFIG.strum.graceMs) leftEmaRatio.reset(); // 긴 공백 뒤 복귀: 이전 손 모양(펼침)이 뮤트 판정에 남지 않게
+    leftLostAt = null;
   }
   prevLeftPalmNorm = left.palm;
   const pts: Point[] = left.landmarks.map((l) => ({ x: (1 - l.x) * W, y: l.y * H }));
@@ -1167,7 +1180,7 @@ function processLeftHand(left: ChosenHand | null, now: number, W: number, H: num
   const pick = pts[CONFIG.strum.pointLandmark] ?? palm;
   pickPoint = pick;
   strumHint(now, true);
-  const events = strum.update(pick, now, lines, strumBand(W), H);
+  const events = strum.update(pick, now, lines, strumBand(W, H), H);
   if (events.length === 0) return;
   const first = events[0]?.tMs ?? now;
   const offset = Math.max(0, CONFIG.strum.scheduleAheadMs - (now - first)); // 0이면 첫 타격 즉시
@@ -1203,7 +1216,7 @@ function strumHint(now: number, leftSeen: boolean): void {
 
 function stringsView(now: number, W: number, H: number): StringsView {
   const ys = stringLines(H, CONFIG.strum.topY, CONFIG.strum.gapY, CONFIG.strum.strings);
-  const b = strumBand(W);
+  const b = strumBand(W, H);
   return { x0: b.x0, x1: b.x1, ys, flash: ys.map((_, i) => Math.max(0, 1 - (now - (strikeAt[i] ?? -Infinity)) / CONFIG.strum.flashMs)) };
 }
 

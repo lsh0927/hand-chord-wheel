@@ -28,7 +28,10 @@ export function chordToMidi(symbol: string): number[] {
  * 틀이 둘이면 윗음이 근음+27반음을 넘지 않는 첫 틀을 고른다(Cadd9처럼 치솟는 배치 방지).
  */
 export function voicing(symbol: string, count = 6, lowest = 40): number[] {
-  const c = Chord.get(symbol);
+  const parsed = Chord.get(symbol);
+  if (parsed.empty || !parsed.tonic) return [];
+  // 슬래시 코드(C/G)는 tonal이 음정을 베이스 기준으로 회전해(5P·8P·10M) 역할 분류가 깨진다. 6줄 틀은 베이스를 따로 둘 수 없으므로 베이스를 떼고 본다
+  const c = parsed.root ? Chord.get([parsed.tonic, parsed.aliases[0] ?? ""]) : parsed;
   if (c.empty || !c.tonic) return [];
   const rootPc = Note.get(c.tonic).chroma;
   if (typeof rootPc !== "number") return [];

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { StrumDetector, stringLines, velocityFromSpeed } from "../src/strum";
 
 const H = 720;
-const LINES = stringLines(H, 0.36, 0.055, 6); // 259.2, 298.8, 338.4, 378, 417.6, 457.2
+const LINES = stringLines(H, 0.36, 0.055, 6); // 테스트용 배치(실제 config는 topY 0.34): 259.2, 298.8, 338.4, 378, 417.6, 457.2
 const BAND = { x0: 0, x1: 500 };
 const det = () => new StrumDetector({ rearmDistRatio: 0.012, minSpeed: 0.05, maxJumpRatio: 0.2, graceMs: 100, refractoryMs: 60 });
 const up = (d: StrumDetector, y: number, t: number, x = 100) => d.update({ x, y }, t, LINES, BAND, H);
@@ -76,6 +76,26 @@ describe("StrumDetector", () => {
     up(d, 250, 0);
     expect(up(d, 650, 33)).toEqual([]); // 0.56H 점프(라벨 뒤바뀜)
     expect(up(d, 640, 66)).toEqual([]); // 이후 정상 추적
+  });
+  it("순간이동 착지점이 줄 바로 옆이면 그 뒤 떨림은 타격이 아니다(장전 재계산)", () => {
+    const d = det();
+    up(d, 600, 0);
+    expect(up(d, 260, 33)).toEqual([]); // 0.47H 점프, 줄 0(259.2) 바로 옆에 착지
+    expect(up(d, 258, 66)).toEqual([]); // 2px 떨림으로 줄을 지나도 미장전
+    up(d, 240, 99); // 19px 떨어짐 → 장전
+    expect(up(d, 262, 132).length).toBe(1);
+  });
+  it("최소 속도(0.05 H/s) 미만의 통과는 세지 않는다", () => {
+    const d = det();
+    up(d, 240, 0);
+    up(d, 258.5, 33);
+    expect(up(d, 259.5, 1033)).toEqual([]); // 1px/1s = 0.0014 H/s
+  });
+  it("직전 프레임에 정확히 줄 위에 있었으면 그때 이미 쳤으므로 다시 세지 않는다", () => {
+    const d = det();
+    up(d, 240, 0);
+    expect(up(d, 259.2, 33).length).toBe(1); // 닿는 순간 1회
+    expect(up(d, 280, 66)).toEqual([]); // 줄 위에서 출발 → 없음
   });
   it("100 ms 안의 공백은 잇는다(공백 전 위치 → 재등장 위치)", () => {
     const d = det();

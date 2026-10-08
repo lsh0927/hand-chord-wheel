@@ -873,3 +873,13 @@ function stringsView(now: number, W: number, H: number): StringsView {
 ## Self-Review
 - 실패 분석 결정 전부 반영: 종료 메시지 예약(Task 4 양쪽), 왼손 상태 독립(Task 5 (d)), 재장전 거리(Task 2), 순간이동 가드·공백 잇기(Task 2), 라벨 뒤바뀜 교차 검사·중복 검출(Task 1), 좌우 바꾸기 초기화(Task 5 (d)), isRunning 가드·T60·버스트·rampTo·release 0.08·뮤트 dampening·stringGain·세기 지수(Task 4), 업 스트로크(Task 5), voicing 빈 배열 null, 안내문 분기, 워치독 왼손, scheduleAhead 노브, muteHold 40 < refractory 60.
 - 타입: `pluck` 6인자 양쪽 구현·인터페이스 동일; `StrumOptions` ↔ config; `BothHands.left` ↔ processLeftHand; `StringsView` ↔ overlay.
+
+## 코드 리뷰 반영(2026-10-08)
+리뷰 워크플로우(리뷰어 4관점 + 발견당 반박자 2명): 발견 11건, 반박 통과 6건(모두 minor), 기각 2건(Tone 필터 구조를 소스로 확인해 반박), 미검증 3건 중 3건 반영.
+- 슬래시 코드(C/G·Am/E·C7/Bb)에서 tonal이 음정을 베이스 기준으로 회전해 3도·5도가 빠지던 것 → 베이스를 떼고(`Chord.get([tonic, alias])`) 분류. 테스트 추가.
+- 순간이동 뒤 장전 상태가 옛 위치 기준으로 남아 착지점 옆 떨림이 타격되던 것 → 착지점 기준으로 장전 재계산. 테스트 추가.
+- 영상 해상도 변경(video resize) 뒤 왼손 감지기가 옛 픽셀 좌표를 쓰던 것 → `resetLeftHandState()` 호출.
+- 왼손이 100 ms 넘게 사라졌다 돌아오면 펼침 EMA 초기화(뮤트 판정이 이전 손 모양을 따라가지 않게).
+- 패널 가운데 + 4:3 영상에서 줄 대역이 휠 안으로 들어가던 것 → 휠 바깥(중심 − 반지름 − 16 px)에서 자름.
+- 미리보기와 가장 아래 줄 간격 8 px → 줄을 0.34H부터(아래 줄 0.615H), 미리보기 폭 20%.
+- 최소 속도·줄 위 출발 규칙 테스트 추가(총 189개), 영향 훅 안내문 갱신.

@@ -86,7 +86,7 @@ export const CONFIG = {
   strum: {
     strings: 6,
     pointLandmark: 8, // 왼손 검지 끝 = 피크
-    topY: 0.36, // 가장 낮은 줄(위)의 높이(영상 높이 비율)
+    topY: 0.34, // 가장 낮은 줄(위)의 높이(영상 높이 비율). 아래 줄 0.615H — 미리보기(0.64H~)와 겹치지 않게
     gapY: 0.055, // 줄 간격
     bandLeft: [0.06, 0.42] as const, // 패널이 오른쪽 아래일 때 줄 대역(영상 폭 비율)
     bandRight: [0.58, 0.94] as const, // 패널이 왼쪽 아래일 때

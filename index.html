@@ -25,7 +25,7 @@
       #avatar-msg:empty { display: none; }
       #frame[data-camview^="avatar"] { background: radial-gradient(ellipse at 50% 35%, #27304a 0%, #0b0c10 70%); }
       #frame[data-camview^="avatar"] #video { opacity: 0; } /* 숨겨도 디코딩·프레임 콜백은 유지(2026-10-07 측정 30/s) */
-      #frame[data-camview="avatar"][data-live="1"] #video { opacity: 1; inset: auto; width: 22%; height: auto; aspect-ratio: 16 / 9; bottom: 96px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); z-index: 2; }
+      #frame[data-camview="avatar"][data-live="1"] #video { opacity: 1; inset: auto; width: 20%; height: auto; aspect-ratio: 16 / 9; bottom: 96px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.3); z-index: 2; }
       #frame[data-camview="avatar"][data-pip="left"] #video { left: 16px; }
       #frame[data-camview="avatar"][data-pip="right"] #video { right: calc(100% * 48 / var(--cvw, 1280)); } /* 영상 픽셀 48 = 음량 막대(W−28) 회피, 축척 무관 */
       #frame[data-camview="video"] #avatar { display: none; }

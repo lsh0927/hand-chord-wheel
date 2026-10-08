@@ -93,6 +93,12 @@ describe("voicing (기타 모양 6음)", () => {
   it("파워코드는 근음·5도만 교대로", () => {
     expect(voicing("A5")).toEqual([45, 52, 57, 64, 69, 76]);
   });
+  it("슬래시 코드는 베이스를 떼고 같은 보이싱(6줄 틀은 베이스를 따로 둘 수 없음)", () => {
+    expect(voicing("C/G")).toEqual(voicing("C"));
+    expect(voicing("Am/E")).toEqual(voicing("Am"));
+    expect(voicing("C7/Bb")).toEqual(voicing("C7"));
+    expect(voicing("Am")).toEqual([45, 52, 57, 60, 64, 69]);
+  });
   it("잘못된 기호는 빈 배열, count는 음 개수", () => {
     expect(voicing("H#")).toEqual([]);
     expect(voicing("A", 4)).toEqual([45, 52, 57, 61]);

@@ -49,7 +49,11 @@ export class StrumDetector {
       this.armed = lines.map((ly) => Math.abs(p.y - ly) >= D);
       return [];
     }
-    if (Math.hypot(p.x - prev.x, p.y - prev.y) > this.o.maxJumpRatio * H) return []; // 순간이동(라벨 뒤바뀜 등)
+    if (Math.hypot(p.x - prev.x, p.y - prev.y) > this.o.maxJumpRatio * H) {
+      // 순간이동(라벨 뒤바뀜 등): 타격 없이 위치만 갱신하고, 착지점 기준으로 장전을 다시 계산(줄 바로 옆에 내려앉은 떨림 차단)
+      this.armed = lines.map((ly) => Math.abs(p.y - ly) >= D);
+      return [];
+    }
     const dt = (now - prev.t) / 1000;
     const speed = Math.abs(p.y - prev.y) / H / dt;
     const out: StrumEvent[] = [];
