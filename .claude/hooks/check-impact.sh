@@ -17,6 +17,7 @@ case "$REL" in
   src/hands.ts) echo "[impact] hands.ts → 오른손 선택(점수·화면 안·연속성). tests/hands.test.ts 실행, 두 손 동시 노출 수동 확인" ;;
   src/audio.ts|src/output.ts) echo "[impact] 소리 출력 → ChordOutput 인터페이스 변경 시 2차 midiOut.ts 호환 확인, 코드 전환 시 release→attack, maxPolyphony 32 유지, 절전 복귀 재개" ;;
   src/tracker.ts) echo "[impact] 손 추적 → GPU→CPU 폴백 확인, 타임스탬프 단조 증가, HAND_CONNECTIONS(유령 손) 재export 유지" ;;
+  src/strum.ts) echo "[impact] 스트럼 감지 → tests/strum.test.ts 실행, 재장전 거리·순간이동 가드·공백 잇기 유지, ?debug=1 strum 속도 실측" ;;
   src/face.ts) echo "[impact] 얼굴 추적 → 선택 기능: 실패해도 Start·연주를 막지 않아야 함(startFaceInit/trackFace 격리), GPU→CPU 폴백, 타임스탬프 단조 증가" ;;
   src/avatar-map.ts) echo "[impact] 표정·머리 매핑 → tests/avatar-map.test.ts 실행, 거울(mirror) 좌우·yaw·roll 반전, NaN 가드 유지" ;;
   src/avatar.ts) echo "[impact] 아바타 장면 → 동적 import 전용(main.ts는 type import만), 세대 번호 loadSeq, dt 상한, VRM 0.x 부호 반전, 크기 0 가드. 샘플 VRM으로 로드 확인" ;;

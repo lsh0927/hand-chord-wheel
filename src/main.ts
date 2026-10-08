@@ -1,12 +1,14 @@
 import { CONFIG } from "./config";
 import { assertCameraSupported, openCamera, stopCamera } from "./camera";
 import { HandTracker, HAND_CONNECTIONS } from "./tracker";
+import type { ChosenHand, HandSelection } from "./hands";
+import { StrumDetector, stringLines, velocityFromSpeed, type StrumBand } from "./strum";
 import { FaceTracker } from "./face";
 import type { AvatarView, AvatarInfo } from "./avatar"; // 타입만 — 정적 import면 three.js가 메인 번들에 묶인다
 import { ToneOutput } from "./audio";
 import type { ChordOutput } from "./output";
 import { MidiManager, MidiOutput, isWebMidiSupported } from "./midi";
-import { chordToMidi, parsePalette } from "./chords";
+import { chordToMidi, parsePalette, voicing } from "./chords";
 import {
   angleDeg,
   nextSector,
@@ -20,7 +22,7 @@ import {
   TIP_IDS,
   type Point,
 } from "./mapping";
-import { drawScene, wheelGeometry, WHEEL_ANCHORS, type Scene, type HandView, type WheelAnchor } from "./overlay";
+import { drawScene, wheelGeometry, WHEEL_ANCHORS, type Scene, type HandView, type WheelAnchor, type StringsView } from "./overlay";
 import { FingerDetector, fingerCount, fingerFlags, heightPercent, StableValue } from "./fingers";
 
 type State = "IDLE" | "STARTING" | "READY" | "PLAYING" | "ERROR";
@@ -59,6 +61,30 @@ let wheelAnchor: WheelAnchor = CONFIG.wheel.defaultAnchor;
 type SelectMode = "wheel" | "fingers";
 const modeSelect = $<HTMLSelectElement>("mode");
 let selectMode: SelectMode = CONFIG.select.defaultMode;
+
+// ── 연주 방식·왼손 스트럼 ────────────────────────────────
+type PlayMode = "strum" | "pad";
+const playSelect = $<HTMLSelectElement>("play");
+let playMode: PlayMode = CONFIG.play.defaultMode;
+const strum = new StrumDetector({
+  rearmDistRatio: CONFIG.strum.rearmDistRatio,
+  minSpeed: CONFIG.strum.minSpeed,
+  maxJumpRatio: CONFIG.strum.maxJumpRatio,
+  graceMs: CONFIG.strum.graceMs,
+  refractoryMs: CONFIG.strum.refractoryMs,
+});
+const leftEmaRatio = new Ema(CONFIG.smoothing.alpha);
+let prevLeftPalmNorm: Point | null = null;
+let leftView: HandView | null = null;
+let pickPoint: Point | null = null;
+let leftOpenPercent = 100;
+let voicingNotes: number[] | null = null; // 스트럼 모드에서 오른손이 잡은 코드의 6음(없으면 null)
+let voicingSector: number | null = null;
+const strikeAt: number[] = []; // 줄별 마지막 타격 시각(번쩍임)
+let strumHintSince: number | null = null;
+let lastStrumHint = -Infinity;
+let bothLabelsSeen = false; // 두 손이 다 보이는데 왼손이 null → '좌우 바꾸기' 안내
+let strumDebug = "";
 const fingerStable = new StableValue(CONFIG.fingers.holdMs);
 const fingerDetector = new FingerDetector();
 let rawFingerCount: number | null = null;
@@ -164,6 +190,17 @@ function resetHandState(): void {
   fingerDebug = "";
 }
 
+/** 왼손(스트럼) 상태. Reset·오류 진입·워치독·모드 변경·좌우 바꾸기에서만 부른다 — 오른손이 없다고 지우면 '줄만 번쩍' 피드백이 깨진다 */
+function resetLeftHandState(): void {
+  leftView = null;
+  pickPoint = null;
+  prevLeftPalmNorm = null;
+  strum.reset();
+  leftEmaRatio.reset();
+  strikeAt.length = 0;
+  strumHintSince = null;
+}
+
 /** 소리를 멈추고 READY로. 표시 칸은 호출자가 정한다. */
 function silence(): void {
   if (state === "PLAYING") {
@@ -172,6 +209,8 @@ function silence(): void {
   }
   currentSector = null;
   level = 0;
+  voicingNotes = null; // 소리를 멈추는 모든 경로에서 보이싱도 비운다(주먹·쉼·Reset·코드 변경 직전)
+  voicingSector = null;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
@@ -465,6 +504,35 @@ function isSelectMode(v: string): v is SelectMode {
   return v === "wheel" || v === "fingers";
 }
 
+function isPlayMode(v: string): v is PlayMode {
+  return v === "strum" || v === "pad";
+}
+function applyPlayMode(m: PlayMode): void {
+  playMode = m;
+  playSelect.value = m;
+  resetLeftHandState();
+  silence();
+}
+function loadPlayMode(): void {
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(CONFIG.play.storageKey);
+  } catch {
+    saved = null;
+  }
+  applyPlayMode(saved && isPlayMode(saved) ? saved : CONFIG.play.defaultMode);
+}
+playSelect.addEventListener("change", () => {
+  const v = playSelect.value;
+  if (!isPlayMode(v)) return;
+  applyPlayMode(v);
+  try {
+    localStorage.setItem(CONFIG.play.storageKey, v);
+  } catch {
+    /* 무시 */
+  }
+});
+
 function applyMode(m: SelectMode): void {
   selectMode = m;
   modeSelect.value = m;
@@ -547,6 +615,8 @@ function loadSwap(): void {
 swapInput.addEventListener("change", () => {
   swap = swapInput.checked;
   prevPalmNorm = null;
+  silence(); // 두 손 역할이 자리를 바꾸는 첫 프레임에 가짜 스트럼이 나지 않게
+  resetLeftHandState();
   try {
     localStorage.setItem(CONFIG.tracker.swapStorageKey, swap ? "1" : "0");
   } catch {
@@ -809,6 +879,7 @@ function enterError(text: string): void {
   faceHint = null;
   faceHold.reset();
   avatar?.resetPose();
+  resetLeftHandState();
   delete frame.dataset.live;
   setState("ERROR");
   message = text;
@@ -879,6 +950,7 @@ resetBtn.addEventListener("click", () => {
   resetHandState();
   avatar?.resetPose();
   faceHold.reset();
+  resetLeftHandState();
   if (wasActive && !faceTracker.ready) {
     faceHint = null;
     startFaceInit(); // 오류로 꺼진 얼굴 추적 재시도(안내문대로)
@@ -951,9 +1023,18 @@ function processFrame(now: number): void {
   const geo = wheelGeometry(W, H, wheelAnchor);
   const center: Point = { x: geo.cx, y: geo.cy };
 
-  const sel = tracker.detect(video, now, { swap, prevPalm: prevPalmNorm });
+  const both = tracker.detect(video, now, { swap, prevRight: prevPalmNorm, prevLeft: prevLeftPalmNorm });
+  const sel = both.right;
   labelsForDebug = sel.labels;
-  otherPalms = sel.otherPalms.map((p) => ({ x: (1 - p.x) * W, y: p.y * H }));
+  bothLabelsSeen = sel.labels.length >= 2;
+  // 패드 모드에서는 왼손도 회색 점으로만 보인다
+  otherPalms = [...sel.otherPalms, ...(playMode !== "strum" && both.left ? [both.left.palm] : [])].map((p) => ({ x: (1 - p.x) * W, y: p.y * H }));
+  processRightHand(sel, now, W, H, center);
+  processLeftHand(both.left, now, W, H);
+}
+
+/** 오른손: 코드 선택·음량(1~3차 로직). 패드 모드는 소리까지, 스트럼 모드는 보이싱까지 */
+function processRightHand(sel: HandSelection, now: number, W: number, H: number, center: Point): void {
   const hand = sel.chosen;
 
   // 손은 보이는데 쓸 수 있는 오른손이 없을 때 안내 (1초 이상 지속, 5초에 한 번). 탈락 사유에 따라 문구를 나눈다
@@ -1023,16 +1104,7 @@ function processFrame(now: number): void {
       silence();
       return;
     }
-    if (state !== "PLAYING" || sector !== currentSector) {
-      const out = output;
-      out.play(midi);
-      if (output !== out) {
-        silence(); // 전송 중 출력이 교체됨(끊김 복귀). 다음 프레임에 새 출력으로 다시 친다
-        return;
-      }
-      currentSector = sector;
-      setState("PLAYING");
-    }
+    if (!soundChord(sector, midi)) return;
     level = (openPercent / 100) ** 2;
     output.setLevel(level, openPercent / 100);
     return;
@@ -1045,6 +1117,94 @@ function processFrame(now: number): void {
     silence();
   }
   // 유예 시간 안이면 마지막 상태 유지
+}
+
+/** 코드가 정해졌을 때. 패드 모드는 바로 울리고, 스트럼 모드는 보이싱만 바꾼다(소리는 왼손이 낸다). 실패(출력 교체)면 false */
+function soundChord(sector: number, midi: readonly number[]): boolean {
+  if (playMode === "strum") {
+    if (sector !== voicingSector) {
+      silence(); // 프렛 손이 바뀌면 울리던 줄은 멎는다(기타와 같음). silence()가 보이싱을 비우므로 그 뒤에 넣는다
+      voicingSector = sector;
+      const v = voicing(palette[sector] ?? "", CONFIG.strum.strings);
+      voicingNotes = v.length > 0 ? v : null; // 빈 배열은 '코드 없음'과 같다(거짓 안내 방지)
+    }
+    return true;
+  }
+  if (state !== "PLAYING" || sector !== currentSector) {
+    const out = output;
+    out.play(midi);
+    if (output !== out) {
+      silence(); // 전송 중 출력이 교체됨(끊김 복귀). 다음 프레임에 새 출력으로 다시 친다
+      return false;
+    }
+    currentSector = sector;
+    setState("PLAYING");
+  }
+  return true;
+}
+
+function strumBand(W: number): StrumBand {
+  const b = wheelAnchor === "bottom-left" ? CONFIG.strum.bandRight : wheelAnchor === "center" ? CONFIG.strum.bandCenter : CONFIG.strum.bandLeft;
+  return { x0: b[0] * W, x1: b[1] * W };
+}
+
+/** 스트럼 모드: 왼손 검지 끝이 줄을 지나면 그 줄의 음을 튕긴다. 오른손 유무와 독립 */
+function processLeftHand(left: ChosenHand | null, now: number, W: number, H: number): void {
+  if (playMode !== "strum") return;
+  const lines = stringLines(H, CONFIG.strum.topY, CONFIG.strum.gapY, CONFIG.strum.strings);
+  if (!left) {
+    leftView = null;
+    pickPoint = null;
+    strum.update(null, now, lines, strumBand(W), H); // 공백 시작(100 ms 안에 돌아오면 잇는다)
+    strumHint(now, false);
+    return;
+  }
+  prevLeftPalmNorm = left.palm;
+  const pts: Point[] = left.landmarks.map((l) => ({ x: (1 - l.x) * W, y: l.y * H }));
+  const palm = palmCenter(pts);
+  leftView = { palm, tips: TIP_IDS.map((i) => pts[i] ?? palm), all: pts };
+  leftOpenPercent = opennessPercent(leftEmaRatio.next(opennessRatio(pts)), CONFIG.openness.closedRatio, CONFIG.openness.openRatio);
+  const pick = pts[CONFIG.strum.pointLandmark] ?? palm;
+  pickPoint = pick;
+  strumHint(now, true);
+  const events = strum.update(pick, now, lines, strumBand(W), H);
+  if (events.length === 0) return;
+  const first = events[0]?.tMs ?? now;
+  const offset = Math.max(0, CONFIG.strum.scheduleAheadMs - (now - first)); // 0이면 첫 타격 즉시
+  const muted = leftOpenPercent < CONFIG.strum.muteBelowPercent;
+  for (const e of events) {
+    strikeAt[e.string] = now;
+    const midi = voicingNotes?.[e.string];
+    if (midi === undefined || !armed) continue; // 코드 없음·Reset 대기: 줄만 번쩍인다
+    const vel =
+      velocityFromSpeed(e.speed, CONFIG.strum.softSpeed, CONFIG.strum.hardSpeed, CONFIG.strum.minVelocity) *
+      (muted ? CONFIG.strum.muteVelocityScale : 1) *
+      (e.dir === "up" ? CONFIG.strum.upStrokeScale : 1);
+    output.pluck(e.string, midi, vel, offset + (e.tMs - first), muted ? CONFIG.strum.muteHoldMs : null, muted);
+    if (state !== "PLAYING") setState("PLAYING");
+    strumDebug = `${e.dir} s${e.string} v${vel.toFixed(2)} ${e.speed.toFixed(1)}H/s${muted ? " mute" : ""}`;
+  }
+}
+
+function strumHint(now: number, leftSeen: boolean): void {
+  if (leftSeen || !voicingNotes) {
+    strumHintSince = null;
+    return;
+  }
+  strumHintSince ??= now;
+  if (now - strumHintSince > CONFIG.strum.hintAfterMs && now - lastStrumHint > CONFIG.strum.hintRepeatMs) {
+    showNotice(
+      bothLabelsSeen ? "두 손이 모두 오른손으로 읽힙니다 — '좌우 바꾸기'를 켜거나 손바닥을 카메라 쪽으로" : "왼손 검지로 줄 6개를 쓸어내리면 소리가 납니다",
+      4000,
+    );
+    lastStrumHint = now;
+  }
+}
+
+function stringsView(now: number, W: number, H: number): StringsView {
+  const ys = stringLines(H, CONFIG.strum.topY, CONFIG.strum.gapY, CONFIG.strum.strings);
+  const b = strumBand(W);
+  return { x0: b.x0, x1: b.x1, ys, flash: ys.map((_, i) => Math.max(0, 1 - (now - (strikeAt[i] ?? -Infinity)) / CONFIG.strum.flashMs)) };
 }
 
 /** 손가락 모드: 펴진 손가락 수로 코드, 손 높이로 음량 */
@@ -1088,16 +1248,7 @@ function processFingerFrame(pts: Point[], palm: Point, H: number, now: number, i
     silence();
     return;
   }
-  if (state !== "PLAYING" || sector !== currentSector) {
-    const out = output;
-    out.play(midi);
-    if (output !== out) {
-      silence();
-      return;
-    }
-    currentSector = sector;
-    setState("PLAYING");
-  }
+  if (!soundChord(sector, midi)) return;
   level = (openPercent / 100) ** CONFIG.fingers.levelExponent;
   output.setLevel(level, openPercent / 100);
 }
@@ -1123,6 +1274,9 @@ function draw(now: number): void {
     hand: handView,
     otherPalms,
     connections: HAND_CONNECTIONS,
+    leftHand: leftView,
+    pick: pickPoint,
+    strings: playMode === "strum" ? stringsView(now, canvas.width, canvas.height) : null,
     openPercent,
     level,
     muted: state !== "PLAYING" || level < 0.02, // 바닥 근처의 사실상 무음도 연하게 표시
@@ -1138,7 +1292,7 @@ function draw(now: number): void {
     debug: debug
       ? `${selectMode === "fingers" ? `h ${openPercent.toFixed(0)}%` : `ratio ${lastRatio.toFixed(2)}`} | ${labelsForDebug.join(" ") || "no hand"} | ${state}${armed ? "" : " (Reset 대기)"}${
           selectMode === "fingers" ? ` | ${fingerDebug || "-"} raw ${rawFingerCount ?? "-"} stable ${fingerStable.value ?? "-"}` : ""
-        }${faceDebug ? ` | face ${faceDebug}` : ""}`
+        }${faceDebug ? ` | face ${faceDebug}` : ""}${playMode === "strum" ? ` | strum ${strumDebug || "-"} voicing ${voicingNotes?.join(",") ?? "-"}` : ""}`
       : null,
   };
   drawScene(ctx, scene);
@@ -1191,10 +1345,11 @@ function loop(now: number): void {
         // 대체 경로(requestVideoFrameCallback 없는 브라우저): currentTime이 바뀐 틱에만 처리
         lastVideoTime = video.currentTime;
         handleFrame(now);
-      } else if (now - lastFrameAt > CONFIG.hold.lostGraceMs && (state === "PLAYING" || handView !== null || shownSector !== null)) {
+      } else if (now - lastFrameAt > CONFIG.hold.lostGraceMs && (state === "PLAYING" || handView !== null || shownSector !== null || leftView !== null)) {
         // 워치독: 영상이 멈추면(트랙 종료·절전·다른 앱) 프레임 없이도 500ms 안에 소리를 끄고 표시를 지운다
         const wasPlaying = state === "PLAYING";
         resetHandState();
+        resetLeftHandState();
         silence();
         if (wasPlaying) showNotice("영상이 멈춰 소리를 껐습니다", 3000);
       }
@@ -1217,6 +1372,7 @@ loadPalette();
 loadSwap();
 loadWheelAnchor();
 loadMode();
+loadPlayMode();
 loadCamView();
 window.addEventListener("resize", fitAvatar);
 renderOutputOptions();
