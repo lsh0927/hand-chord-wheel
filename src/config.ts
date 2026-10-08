@@ -146,7 +146,7 @@ export const CONFIG = {
     camera: { fov: 30, y: 1.35, z: 1.7 },
     armDownDeg: 70, // VRM 기본 T자 자세의 팔을 몸 옆으로 내리는 각도(2단계에서 손 추적으로 대체)
     camViewStorageKey: "hcw.camview.v1",
-    defaultCamView: "avatar", // "avatar" | "avatar-nopip" | "video"
+    defaultCamView: "video", // "avatar" | "avatar-nopip" | "video" — 처음 열면 내 영상이 먼저 보이고, 아바타는 상자에서 고를 때 켠다(갑자기 캐릭터가 뜨면 놀란다)
   },
   midi: {
     channel: 1, // 1~16
